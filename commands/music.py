@@ -2,7 +2,7 @@ import asyncio
 import datetime
 from enum import Enum
 import re
-from discord import ButtonStyle, Embed, SelectOption, TextStyle, app_commands,Interaction,Object,utils,Color,WebhookMessage,User,Member
+from discord import ButtonStyle, Embed, app_commands,Interaction,Object,utils,Colour,WebhookMessage,User,Member
 from discord.ext import commands,tasks
 from discord.ui import Button,View
 import wavelink
@@ -75,7 +75,7 @@ class ControlView(View):
         await self.player.stop()
 
     def create_current_song_embed(self):
-        miko = Embed(color=Color.green())
+        miko = Embed(colour = Colour.random())
         miko.set_author(name = "🎧現正播放中...")
         miko.set_thumbnail(url = self.history_thumbnails[self.position-1])
         miko.add_field(name = "🎯名稱:",value = self.player.source.info.get("title"))
@@ -181,7 +181,7 @@ class SelectSongView(View):
     def create_song_embed(self,interaction:Interaction):
         miko = []
         for index,song in enumerate(self.tracks[self.start:self.end]):
-            neko = Embed()
+            neko = Embed(colour = Colour.random())
             neko.set_author(name=f"第{index+1}首:")
             neko.set_thumbnail(url = song.thumbnail)
             neko.add_field(name = "歌名:",value = f"{song.title}")
@@ -194,7 +194,8 @@ class SelectSongView(View):
     async def cancel(self,interaction:Interaction):
         if self.player.queue.is_empty and not self.player.is_playing():
             await self.player.disconnect()
-            self.player = None
+            interaction.client.get_cog("Music").players.pop(interaction.guild_id)
+            interaction.client.get_cog("Music").control_panels.pop(interaction.guild_id)
         await interaction.response.edit_message(content="已取消",embed=None,view=None)
     
     async def select_song(self,interaction:Interaction):
@@ -255,7 +256,8 @@ class SelectSongView(View):
 class Music(commands.Cog):
     def __init__(self,bot):
         self.bot = bot
-        self.player = None
+        self.players = {}
+        self.control_panels = {} 
         bot.loop.create_task(self.create_nodes())
 
     async def timeout_user(self,*,user_id:int,guild_id:int,until):
@@ -279,94 +281,99 @@ class Music(commands.Cog):
 
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, player: wavelink.Player, track:wavelink.Track, reason):
+        guild_id = list(self.players.keys())[list(self.players.values()).index(player)]
+        control_panel = self.control_panels[guild_id]
         if not player.queue.is_empty:
-            if (self.control_panel.cycle_type == self.control_panel.CycleType.SINGLE) & self.control_panel.cycle & (not self.control_panel.skip):
+            if (control_panel.cycle_type == control_panel.CycleType.SINGLE) & control_panel.cycle & (not control_panel.skip):
                 await player.play(track)
                 return
 
-            if self.control_panel.skip:
-                self.control_panel.skip = False
+            if control_panel.skip:
+                control_panel.skip = False
 
             new = await player.queue.get_wait()
             await player.play(new)
-            self.control_panel.position += 1
-            await self.control_panel.message.edit(embed=self.control_panel.create_current_song_embed(),view=self.control_panel)
+            control_panel.position += 1
+            await control_panel.message.edit(embed=control_panel.create_current_song_embed(),view=control_panel)
         else:
-            if self.control_panel._stop | (not self.control_panel.cycle):
-                await self.player.disconnect()
-                self.player = None
-                self.control_panel.refresh_panel.cancel()
-                await self.control_panel.message.delete()
-                self.control_panel.refresh_webhook.cancel()
+            if control_panel._stop | (not control_panel.cycle):
+                await player.disconnect()
+                self.players.pop(guild_id)
+                control_panel.refresh_panel.cancel()
+                await control_panel.message.delete()
+                control_panel.refresh_webhook.cancel()
+                self.control_panels.pop(guild_id)
             else:
-                if self.control_panel.cycle_type == self.control_panel.CycleType.SINGLE:
+                if control_panel.cycle_type == control_panel.CycleType.SINGLE:
                     await player.play(track)
                 else:
-                    for item in self.control_panel.history_song:
+                    for item in control_panel.history_song:
                         await player.queue.put_wait(item.song)
                     new = await player.queue.get_wait()
                     await player.play(new)
-                    self.control_panel.position = 1
-                    self.control_panel.length = len(self.control_panel.history_song)
-                await self.control_panel.message.edit(embed=self.control_panel.create_current_song_embed(),view=self.control_panel)
+                    control_panel.position = 1
+                    control_panel.length = len(control_panel.history_song)
+                await control_panel.message.edit(embed=control_panel.create_current_song_embed(),view=control_panel)
 
     @app_commands.command(name = "play", description="播放音樂")
     async def play(self,interaction:Interaction,query:str):
         if interaction.user.voice is None:
             await interaction.response.send_message("請先加入語音頻道，再輸入指令",ephemeral=True)
             return
-        elif self.player is None:
-            self.player:wavelink.Player = await interaction.user.voice.channel.connect(cls=wavelink.Player)
-            self.control_panel = ControlView(self.player)
-            self.control_panel.channel = interaction.channel
-            
+        elif not self.players.__contains__(interaction.guild_id):
+            self.players[interaction.guild_id] = await interaction.user.voice.channel.connect(cls=wavelink.Player)
+            self.control_panels[interaction.guild_id] = ControlView(self.players.get(interaction.guild_id))
+            self.control_panels.get(interaction.guild_id).channel = interaction.channel
+
+        control_panel = self.control_panels.get(interaction.guild_id)
+        player = self.players.get(interaction.guild_id)
         if re.match(URL_REGEX,query):
             check = yarl.URL(query)
             if check.query.get("list"): 
                 search:wavelink.YouTubePlaylist = await wavelink.NodePool.get_node().get_playlist(wavelink.YouTubePlaylist,query)
                 for song in search.tracks:
-                    self.control_panel.history_thumbnails.append(song.thumbnail)
-                    self.control_panel.history_song.append(HistorySong(song,interaction.user))
-                self.control_panel.length += len(search.tracks)
-                if self.player.queue.is_empty and not self.player.is_playing():
+                    control_panel.history_thumbnails.append(song.thumbnail)
+                    control_panel.history_song.append(HistorySong(song,interaction.user))
+                control_panel.length += len(search.tracks)
+                if player.queue.is_empty and not player.is_playing():
                     await interaction.response.defer() 
-                    await self.player.play(search.tracks[0])
+                    await player.play(search.tracks[0])
                     for index,song in enumerate(search.tracks):
                         if index == 0:
                             continue
-                        await self.player.queue.put_wait(song)
-                    self.control_panel.message : WebhookMessage =  await interaction.followup.send(embed=self.control_panel.create_current_song_embed(),view=self.control_panel)
-                    self.control_panel.message_id = self.control_panel.message.id
-                    self.control_panel.refresh_webhook.start()
-                    self.control_panel.refresh_panel.start()
+                        await player.queue.put_wait(song)
+                    control_panel.message : WebhookMessage =  await interaction.followup.send(embed = control_panel.create_current_song_embed(),view = control_panel)
+                    control_panel.message_id = control_panel.message.id
+                    control_panel.refresh_webhook.start()
+                    control_panel.refresh_panel.start()
                 else:
                     await interaction.response.defer(ephemeral=True)
                     for song in search.tracks:
-                        await self.player.queue.put_wait(song) 
+                        await player.queue.put_wait(song) 
                     await interaction.followup.send(content = f'已新增歌單 `{search.name}` 至隊列中 共{len(search.tracks)}首')
-                    await self.control_panel.message.edit(content =f"<@{interaction.user.id}> 已新增歌單 `{search.name}` 至隊列中  共{len(search.tracks)}首", embed=self.control_panel.create_current_song_embed(),view=self.control_panel) 
+                    await control_panel.message.edit(content =f"<@{interaction.user.id}> 已新增歌單 `{search.name}` 至隊列中  共{len(search.tracks)}首", embed = control_panel.create_current_song_embed(),view = control_panel) 
             else:
                 search = (await wavelink.NodePool.get_node().get_tracks(wavelink.YouTubeTrack,query))[0]
-                self.control_panel.history_thumbnails.append(search.thumbnail)
-                self.control_panel.history_song.append(HistorySong(search,interaction.user))
-                self.control_panel.length += 1
-                if self.player.queue.is_empty and not self.player.is_playing():
+                control_panel.history_thumbnails.append(search.thumbnail)
+                control_panel.history_song.append(HistorySong(search,interaction.user))
+                control_panel.length += 1
+                if player.queue.is_empty and not player.is_playing():
                     await interaction.response.defer() 
-                    await self.player.play(search)
-                    self.control_panel.message : WebhookMessage =  await interaction.followup.send(embed=self.control_panel.create_current_song_embed(),view=self.control_panel)
-                    self.control_panel.message_id = self.control_panel.message.id
-                    self.control_panel.refresh_webhook.start()
+                    await player.play(search)
+                    control_panel.message : WebhookMessage =  await interaction.followup.send(embed = control_panel.create_current_song_embed(),view = control_panel)
+                    control_panel.message_id = control_panel.message.id
+                    control_panel.refresh_webhook.start()
                     if int(search.duration/3600) < 24:
-                        self.control_panel.refresh_panel.start()
+                        control_panel.refresh_panel.start()
                 else:
                     await interaction.response.defer(ephemeral=True) 
-                    await self.player.queue.put_wait(search)
+                    await player.queue.put_wait(search)
                     await interaction.followup.send(content = f'已新增歌曲 `{search.title}` 至隊列中 序列位置為:{self.control_panel.length}')
-                    await self.control_panel.message.edit(content =f"<@{interaction.user.id}> 已新增歌曲 `{search.title}` 至隊列中", embed=self.control_panel.create_current_song_embed(),view=self.control_panel) 
+                    await control_panel.message.edit(content = f"<@{interaction.user.id}> 已新增歌曲 `{search.title}` 至隊列中", embed = control_panel.create_current_song_embed(),view = control_panel) 
         else:
-            search = await wavelink.YouTubeTrack.search(query=query)
-            select,miko = await create_selectsongview(interaction,search[:20],self.player,self.control_panel)
-            await interaction.response.send_message(view=select,embeds=miko,ephemeral=True)
+            search = await wavelink.YouTubeTrack.search(query = query)
+            select,miko = await create_selectsongview(interaction , search[:20], player, control_panel)
+            await interaction.response.send_message(view = select,embeds = miko,ephemeral = True)
         
 async def setup(bot:commands.Bot):
      await bot.add_cog(Music(bot)) #,guilds = [Object(id = 469507920808116234)] #目前為全域都有安裝此模組(非特定伺服器)
