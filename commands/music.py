@@ -356,7 +356,7 @@ class Music(commands.Cog):
                     self.control_panel.message : WebhookMessage =  await interaction.followup.send(embed=self.control_panel.create_current_song_embed(),view=self.control_panel)
                     self.control_panel.message_id = self.control_panel.message.id
                     self.control_panel.refresh_webhook.start()
-                    if int(search.duration/3600) >= 24:
+                    if int(search.duration/3600) < 24:
                         self.control_panel.refresh_panel.start()
                 else:
                     await interaction.response.defer(ephemeral=True) 
