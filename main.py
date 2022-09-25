@@ -2,7 +2,7 @@ import json
 import os
 import aiohttp
 from discord.ext import commands
-from discord import Activity,ActivityType,Game,Intents
+from discord import app_commands,Activity,ActivityType,Game,Intents,Interaction,Object
 
 with open('./config/settings.json',"r",encoding='utf-8') as f:
     settings = json.load(f)
@@ -10,7 +10,7 @@ with open('./config/settings.json',"r",encoding='utf-8') as f:
 class client(commands.Bot):
     def __init__(self,**options):
         super().__init__(
-            command_prefix="!",
+            command_prefix=".",
             intents = Intents.all(),
             application_id = settings['application_id'],
             **options
@@ -29,20 +29,23 @@ class client(commands.Bot):
         watching = Activity(type = ActivityType.playing, name = f"音樂 | 輸入 /play 開始 | 服務於 {len(bot.guilds)} 個伺服器" )
         await bot.change_presence(activity = watching)
 
-    @commands.command()
-    async def load(self,ctx,extension):
-        bot.load_extension(f'commands.{extension}')
-        await ctx.send(f'讀入{extension}完成')
+    # @app_commands.command(name = "load", description="載入插件")
+    # @app_commands.guilds(Object(id = 469507920808116234))
+    # async def load(self,interaction:Interaction,extension:str):
+    #     bot.load_extension(f'commands.{extension}')
+    #     await interaction.response.send_message(f'讀入{extension}完成',ephemeral=True)
 
-    @commands.command()
-    async def unload(self,ctx,extension):
-        bot.unload_extension(f'commands.{extension}')
-        await ctx.send(f'卸載{extension}完成')
+    # @app_commands.command(name = "unload", description="卸載插件")
+    # @app_commands.guilds(Object(id = 469507920808116234))
+    # async def unload(self,interaction:Interaction,extension:str):
+    #     bot.unload_extension(f'commands.{extension}')
+    #     await interaction.response.send_message(f'卸載{extension}完成',ephemeral=True)
 
-    @commands.command()
-    async def reload(self,ctx,extension):
-        bot.reload_extension(f'commands.{extension}')
-        await ctx.send(f'重新讀入{extension}完成')
+    # @app_commands.command(name = "reload", description="重新讀取插件")
+    # @app_commands.guilds(Object(id = 469507920808116234))
+    # async def reload(self,interaction:Interaction,extension:str):
+    #     bot.reload_extension(f'commands.{extension}')
+    #     await interaction.response.send_message(f'重新讀入{extension}完成',ephemeral=True)
 
 
 

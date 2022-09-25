@@ -2,9 +2,9 @@ import asyncio
 import datetime
 from enum import Enum
 import re
-from discord import ButtonStyle, Embed, app_commands,Interaction,Object,utils,Colour,WebhookMessage,User,Member
+from discord import ButtonStyle, Embed, app_commands,Interaction,Object,utils,Colour,WebhookMessage,User,Member,TextStyle
 from discord.ext import commands,tasks
-from discord.ui import Button,View
+from discord.ui import Button,View,Modal,TextInput
 import wavelink
 import yarl
 URL_REGEX = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
@@ -15,6 +15,18 @@ OPTIONS = {
     "4️⃣": 3,
     "5️⃣": 4
 }
+
+class VolumeModal(Modal):
+    def __init__(self,control_panel):
+        super().__init__(title = "調整音量大小")
+        self.control_panel = control_panel
+        self.volume = TextInput(label='音量(0-500):', style = TextStyle.short)
+        self.add_item(self.volume)
+
+
+    async def on_submit(self, interaction:Interaction):
+        await self.control_panel.set_volume(float(self.volume.value))
+        await interaction.response.edit_message(embed=self.control_panel.create_current_song_embed(),view=self.control_panel)
 
 class HistorySong():
     def __init__(self,song,user):
@@ -74,6 +86,9 @@ class ControlView(View):
         self._stop = True
         await self.player.stop()
 
+    async def volume_callback(self,interaction:Interaction):
+        await interaction.response.send_modal(VolumeModal(self))  
+
     def create_current_song_embed(self):
         miko = Embed(colour = Colour.random())
         miko.set_author(name = "🎧現正播放中...")
@@ -83,13 +98,16 @@ class ControlView(View):
             miko.add_field(name = "🔗網址:",value = self.player.source.info.get("uri"))    
         miko.add_field(name = "⌛長度:",value = f"{str(int(self.player.source.duration/3600)).zfill(2)}:{str(int(self.player.source.duration/60%60)).zfill(2)}:{str(int(self.player.source.duration%60)).zfill(2)}" if int(self.player.source.duration/3600) < 24 else "直播中",inline=False)
         miko.add_field(name="📼進度",value=self.get_current_song_position()) 
-        miko.add_field(name = "🔊音量:",value = self.get_volume(),inline=False)
+        miko.add_field(name = "🔊音量:",value = f"{self.get_volume()}%",inline=False)
         miko.add_field(name = "🚩目前序位:",value = self.get_current_queue())
         self.ui_control()
         return miko
 
     def get_volume(self) -> str:
-        return f"{self.player.volume}"
+        return f"{int(self.player.volume * 100)}"
+    
+    async def set_volume(self,volume):
+        await self.player.set_volume(volume,seek=True)
 
     def get_current_queue(self) -> str:
         return f"{self.position}/{self.length}"
@@ -124,6 +142,7 @@ class ControlView(View):
             self.add(Button(style = ButtonStyle.green,label="播放",emoji="▶️"),self.play_and_pause) 
         self.add(Button(style = ButtonStyle.red,label = "停止",emoji="⏹️"),self.stop_callback)
         self.add(Button(style = ButtonStyle.primary,label = "跳過",emoji="⏭️"),self.skip_callback)
+        self.add(Button(style = ButtonStyle.green,label = "調整音量",emoji="🎤"),self.volume_callback)
         if self.position == self.length:
             self.children[2].disabled = True
         if not self.cycle:
@@ -135,7 +154,6 @@ class ControlView(View):
         else:
             self.add(Button(style = ButtonStyle.green,label = "循環模式:全部",emoji="🔁"),self.cycle_type_callback)
         self.add(Button(style = ButtonStyle.primary,label = "當前歌單",emoji="📢"),self.get_current_song_list)
-
     @property
     def message(self):
         return self._message
@@ -321,9 +339,15 @@ class Music(commands.Cog):
             await interaction.response.send_message("請先加入語音頻道，再輸入指令",ephemeral=True)
             return
         elif not self.players.__contains__(interaction.guild_id):
-            self.players[interaction.guild_id] = await interaction.user.voice.channel.connect(cls=wavelink.Player)
-            self.control_panels[interaction.guild_id] = ControlView(self.players.get(interaction.guild_id))
-            self.control_panels.get(interaction.guild_id).channel = interaction.channel
+            self.players[interaction.guild_id] = await interaction.user.voice.channel.connect(cls=wavelink.Player) 
+            await asyncio.sleep(1)
+            if self.players[interaction.guild_id].is_connected():
+                self.control_panels[interaction.guild_id] = ControlView(self.players.get(interaction.guild_id))
+                self.control_panels.get(interaction.guild_id).channel = interaction.channel
+            else:
+                self.players.pop(interaction.guild_id)
+                await interaction.response.send_message("無法加入語音頻道，請稍後再嘗試",ephemeral=True)
+                return
 
         control_panel = self.control_panels.get(interaction.guild_id)
         player = self.players.get(interaction.guild_id)
