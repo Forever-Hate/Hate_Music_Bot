@@ -10,7 +10,7 @@ with open('./config/settings.json',"r",encoding='utf-8') as f:
 class client(commands.Bot):
     def __init__(self,**options):
         super().__init__(
-            command_prefix=".",
+            command_prefix="-",
             intents = Intents.all(),
             application_id = settings['application_id'],
             **options

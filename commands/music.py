@@ -20,12 +20,12 @@ class VolumeModal(Modal):
     def __init__(self,control_panel):
         super().__init__(title = "調整音量大小")
         self.control_panel = control_panel
-        self.volume = TextInput(label='音量(0-500):', style = TextStyle.short)
+        self.volume = TextInput(label='音量(0-1000):', style = TextStyle.short)
         self.add_item(self.volume)
 
 
     async def on_submit(self, interaction:Interaction):
-        await self.control_panel.set_volume(float(self.volume.value))
+        await self.control_panel.set_volume(int(self.volume.value))
         await interaction.response.edit_message(embed=self.control_panel.create_current_song_embed(),view=self.control_panel)
 
 class HistorySong():
@@ -104,10 +104,10 @@ class ControlView(View):
         return miko
 
     def get_volume(self) -> str:
-        return f"{int(self.player.volume * 100)}"
+        return self.player.volume
     
     async def set_volume(self,volume):
-        await self.player.set_volume(volume,seek=True)
+        await self.player.set_volume(volume)
 
     def get_current_queue(self) -> str:
         return f"{self.position}/{self.length}"
@@ -154,6 +154,7 @@ class ControlView(View):
         else:
             self.add(Button(style = ButtonStyle.green,label = "循環模式:全部",emoji="🔁"),self.cycle_type_callback)
         self.add(Button(style = ButtonStyle.primary,label = "當前歌單",emoji="📢"),self.get_current_song_list)
+        
     @property
     def message(self):
         return self._message
@@ -392,7 +393,7 @@ class Music(commands.Cog):
                 else:
                     await interaction.response.defer(ephemeral=True) 
                     await player.queue.put_wait(search)
-                    await interaction.followup.send(content = f'已新增歌曲 `{search.title}` 至隊列中 序列位置為:{self.control_panel.length}')
+                    await interaction.followup.send(content = f'已新增歌曲 `{search.title}` 至隊列中 序列位置為:{control_panel.length}')
                     await control_panel.message.edit(content = f"<@{interaction.user.id}> 已新增歌曲 `{search.title}` 至隊列中", embed = control_panel.create_current_song_embed(),view = control_panel) 
         else:
             search = await wavelink.YouTubeTrack.search(query = query)
