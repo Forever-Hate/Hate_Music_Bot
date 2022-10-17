@@ -26,7 +26,7 @@ class client(commands.Bot):
 
     async def on_ready(self):
         print('Music bot已上線 上線ID為:{0.user}'.format(bot))
-        watching = Activity(type = ActivityType.playing, name = f"音樂 | 輸入 /play 開始 | 服務於 {len(bot.guilds)} 個伺服器" )
+        watching = Activity(type = ActivityType.playing, name = f"輸入 /play 開始 | 服務於 {len(bot.guilds)} 個伺服器")
         await bot.change_presence(activity = watching)
 
     # @app_commands.command(name = "load", description="載入插件")

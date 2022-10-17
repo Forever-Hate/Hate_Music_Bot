@@ -1,4 +1,14 @@
 {
   "application_id": 944801895665516564,
-  "token": ""
+  "token": "",
+  "Mysql":{
+    "database": "discord_music_bot",
+    "table_latest": "latest_video",
+    "table_video_channel": "yt_channel",
+    "table_dc_server": "dc_server",
+    "host": "localhost",
+    "port": 3306,
+    "user": "root",
+    "password": ""
+  }
 }
