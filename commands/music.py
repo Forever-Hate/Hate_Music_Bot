@@ -7,7 +7,6 @@ from discord.ext import commands,tasks
 from discord.ui import Button,View,Modal,TextInput,Select
 import wavelink
 import yarl
-import json
 import lib.notification as nc
 import lib.mysql as mysql
 
@@ -47,6 +46,57 @@ class HistorySong():
     def __init__(self,song:wavelink.Track,user:User):
         self.song = song
         self.user = user
+
+class HistorySongView(CustomView):
+
+    def __init__(self,player:wavelink.Player,history_song:list,position:int):
+        super().__init__(timeout = None)
+        self.player = player
+        self.history_song = history_song
+        self.position = position
+        self.start = 0
+        self.end = 10
+        self.get_history_song_info()
+        self.add_base_button()
+
+    def get_history_song_info(self):
+        if (self.player.is_playing() | self.player.is_paused()) & (self.player.source is not None):
+            self.song_list = f"<:moo:1017734836426915860>當前歌單:(第{self.start+1}首 ~ 第{self.end if len(self.history_song) >= self.end else len(self.history_song)}首 共{len(self.history_song)}首)\n"
+            if self.position - 1 < self.start:
+                is_done = False
+            else:
+                is_done = True
+            for index,item in enumerate(self.history_song[self.start:self.end]):
+                self.song_list = self.song_list + f"{index + 1}. {item.song.title}(<@{item.user.id}>)"
+                if self.position - 1 == index + self.start:
+                    self.song_list = self.song_list + "-💿\n"
+                    is_done = False
+                    continue
+                elif is_done:
+                    self.song_list = self.song_list + "-🏁\n"
+                else:
+                    self.song_list = self.song_list + "-💤\n"
+
+    async def next(self,interaction:Interaction):
+        await interaction.response.defer(ephemeral=True)
+        self.start += int(interaction.data.get('custom_id'))
+        self.end += int(interaction.data.get('custom_id'))
+        self.get_history_song_info()
+        self.ui_control()
+        await interaction.followup.edit_message(interaction.message.id,content = f"{self.song_list}",view=self)
+
+    def add_base_button(self):
+        self.add(Button(style = ButtonStyle.green,label = "前十首",emoji="⏮️",custom_id="-10"),self.next)
+        self.add(Button(style = ButtonStyle.green,label = "下十首",emoji="⏭️",custom_id="10"),self.next)
+        self.ui_control()
+
+    def ui_control(self):
+        self.children[0].disabled = False
+        self.children[1].disabled = False
+        if self.start == 0:
+            self.children[0].disabled = True
+        if len(self.history_song) <= self.end:
+            self.children[1].disabled = True
 
 class ControlView(CustomView):
     def __init__(self,player:wavelink.Player):
@@ -90,7 +140,6 @@ class ControlView(CustomView):
             self.cycle_type = self.CycleType.SINGLE
         await interaction.response.edit_message(embed=self.create_embed(),view=self)  
 
-
     async def skip_callback(self,interaction:Interaction):
         if not isinstance(self.history_song[self.position - 1],nc.Live):
             self.skip = True
@@ -110,12 +159,10 @@ class ControlView(CustomView):
 
     async def stop_callback(self,interaction:Interaction):
         if not isinstance(self.history_song[self.position - 1],nc.Live):
-            print(789)
             self.player.queue.clear()
             self._stop = True
             await self.player.stop()
         else:
-            print(101112)
             await self.player.disconnect()
             await self.message.delete()
             self.refresh_panel.cancel()
@@ -125,6 +172,16 @@ class ControlView(CustomView):
 
     async def volume_callback(self,interaction:Interaction):
         await interaction.response.send_modal(VolumeModal(self))  
+
+    async def delete_callback(self,interaction:Interaction):
+        self.history_song.pop(self.position-1)
+        self.history_thumbnails.pop(self.position-1)
+        self.position -= 1
+        self.length -= 1
+        await self.player.stop()
+        await asyncio.sleep(1.5)
+        if self.position != 0:
+            await interaction.response.edit_message(content=f"<@{interaction.user.id}>已移除上首歌曲",embed=self.create_embed(),view=self)
 
     def create_current_live_waiting_embed(self):
         miko = Embed(colour = Colour.random())
@@ -136,7 +193,10 @@ class ControlView(CustomView):
             miko.add_field(name = "⌛距離開始直播還有:",value = f"<t:{self.history_song[self.position-1].start_time}:R>",inline=False)
         else:
             miko.add_field(name = "⌛等待直播開始:",value = f"已嘗試連接 {self.history_song[self.position-1].reconnection_times} 次",inline=False)
-        miko.add_field(name = "頻道:",value=self.history_song[self.position-1].channel_title)
+        if self.history_song[self.position-1].platform == "youtube":
+            miko.add_field(name = "<:yt:1032640435375583342>頻道:",value=self.history_song[self.position-1].channel_title)
+        elif self.history_song[self.position-1].platform == "twitch":
+            miko.add_field(name = "<:th:1032831426959245423>頻道:",value=self.history_song[self.position-1].channel_title)
         miko.add_field(name = "🔊音量:",value = f"{self.get_volume()}%",inline=False)
         miko.add_field(name = "🚩目前序位:",value = self.get_current_queue())
         self.ui_control()
@@ -174,19 +234,8 @@ class ControlView(CustomView):
 
     async def get_current_song_list(self,interaction:Interaction):
         if (self.player.is_playing() | self.player.is_paused()) & (self.player.source is not None):
-            song_list = ""
-            is_done = True
-            for index,item in enumerate(self.history_song):
-                song_list = song_list + f"{index+1}. {item.song.title}(<@{item.user.id}>)"
-                if self.player.source.info.get('title') == item.song.title:
-                    song_list = song_list + "-💿\n"
-                    is_done = False
-                    continue
-                elif is_done:
-                    song_list = song_list + "-🏁\n"
-                else:
-                    song_list = song_list + "-💤\n"
-            await interaction.response.send_message(content=f"<:moo:1017734836426915860>當前歌單:\n{song_list}",ephemeral=True)
+            histroy = HistorySongView(self.player,self.history_song,self.position)
+            await interaction.response.send_message(content = histroy.song_list,view = histroy,ephemeral=True)
         else:
             await interaction.response.send_message(content="請在播放或暫停時再點選此按鈕",ephemeral=True)
 
@@ -202,6 +251,7 @@ class ControlView(CustomView):
             self.add(Button(style = ButtonStyle.green,label="播放",emoji="▶️"),self.play_and_pause) 
         self.add(Button(style = ButtonStyle.red,label = "停止",emoji="⏹️"),self.stop_callback)
         self.add(Button(style = ButtonStyle.primary,label = "跳過",emoji="⏭️"),self.skip_callback)
+        self.add(Button(style = ButtonStyle.red,label="刪除",emoji="⛔"),self.delete_callback)
         self.add(Button(style = ButtonStyle.green,label = "調整音量/播放速度",emoji="🎤"),self.volume_callback)
         if self.position == self.length:
             self.children[2].disabled = True
@@ -229,9 +279,8 @@ class ControlView(CustomView):
 
     @tasks.loop(seconds = 5)
     async def refresh_panel(self):
-        await self.message.edit(embed=self.create_embed(),view=self)
+        await self.message.edit(content = None,embed=self.create_embed(),view=self)
         
-
 async def create_selectsongview(interaction,tracks,player,control_panel):
     select_song = SelectSongView(tracks,player,control_panel) 
     miko = await select_song._init(interaction)
@@ -318,8 +367,6 @@ class SelectSongView(CustomView):
         if self.end == 20:
             self.children[7].disabled = True
 
-
-
 class Music(commands.Cog):
     def __init__(self,bot):
         self.bot = bot
@@ -346,7 +393,7 @@ class Music(commands.Cog):
             if g.guild_id in self.notification_channels.get(notice.id)['channels'].keys():
                 await message.edit(content = f"已經新增過{notice.title}的直播/新片通知")  
             else:
-                self.notification_channels.get(notice.id)['channels'][g.guild_id] = g
+                self.notification_channels.get(notice.id)['channels'][g.guild_id] = {'obj':g}
                 channels.append(notice)
                 mysql.subscribe_channel(notice,g)
                 await message.edit(content = f"已新增{notice.title}的直播/新片通知") 
@@ -354,12 +401,13 @@ class Music(commands.Cog):
             self.notification_channels[notice.id] = {
                 "obj":notice,
                 "channels":{
-                    g.guild_id:g
+                    g.guild_id:{'obj':g}
                 }
             }
             channels.append(notice)
             mysql.subscribe_channel(notice,g)
             await message.edit(content = f"已新增{notice.title}的直播/新片通知")
+        print(self.notification_channels)
 
     @add.autocomplete('platform')
     async def add_autocomplete_callback(self,interaction:Interaction, current: str):
@@ -409,13 +457,13 @@ class Music(commands.Cog):
     async def show(self,interaction: Interaction):
         channel_embeds = []
         channels:list = self.get_subscribe_channel(interaction.guild_id)
-        for (index,channel) in enumerate(channels) :
+        for (index,channel) in enumerate(channels):
             miko = Embed(colour = Colour.random())
             miko.set_author(name = f"第 {index+1} 個頻道:")
             miko.set_thumbnail(url = channel.thumbnail)
             miko.add_field(name = "🎯名稱:",value = channel.title,inline=False)
             miko.add_field(name = "🔗網址:",value = f"https://www.youtube.com/channel/{channel.id}" if channel.platform == "youtube" else f"https://www.twitch.tv/{channel.id}",inline=False)
-            miko.add_field(name = "🚩平台:",value = channel.platform)
+            miko.add_field(name = "🚩平台:",value = f"<:yt:1032640435375583342>Youtube" if channel.platform == "youtube" else f"<:th:1032831426959245423>Twitch")
             channel_embeds.append(miko)
         await interaction.response.send_message(content=f"此群訂閱的所有頻道(共{len(channels)}個):",embeds=channel_embeds,ephemeral=True)
 
@@ -453,7 +501,7 @@ class Music(commands.Cog):
         nc.checkforvideos.start(self.bot,self.notification_channels,self.players,self.control_panels,self.watch_list,self.node)
 
     @commands.Cog.listener()
-    async def on_wavelink_track_end(self, player: wavelink.Player, track:wavelink.Track, reason): #自然循環有問題(有直播時)
+    async def on_wavelink_track_end(self, player: wavelink.Player, track:wavelink.Track, reason):
         guild_id = list(self.players.keys())[list(self.players.values()).index(player)]
         control_panel = self.control_panels[guild_id]
         control_panel.speed = 1.0
@@ -497,8 +545,6 @@ class Music(commands.Cog):
                 control_panel.refresh_panel.cancel()
         control_panel.position += 1
         await control_panel.message.edit(embed=control_panel.create_embed(),view=control_panel)
-
-        
 
     @app_commands.command(name = "play", description="播放音樂") 
     async def play(self,interaction:Interaction,query:str): 
@@ -579,7 +625,6 @@ class Music(commands.Cog):
             search = await wavelink.YouTubeTrack.search(query = query)
             select,miko = await create_selectsongview(interaction , search[:20], player, control_panel)
             await interaction.followup.edit_message(message.id,view = select,embeds = miko)
-
 
 async def setup(bot:commands.Bot):
      await bot.add_cog(Music(bot)) #,guilds = [Object(id = 469507920808116234)] #目前為全域都有安裝此模組(非特定伺服器)

@@ -10,5 +10,12 @@
     "port": 3306,
     "user": "root",
     "password": ""
+  },
+  "announcement":{
+    "contents": ["輸入 /play 開始 | 服務於 {server_count} 個伺服器","直播/新影片通知上線!! 快輸入 /notification 試用"],
+    "interval": 3600
+  },
+  "notification":{
+    "interval": 900
   }
 }

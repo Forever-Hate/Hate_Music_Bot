@@ -1,7 +1,7 @@
 import json
 import os
 import aiohttp
-from discord.ext import commands
+from discord.ext import commands,tasks
 from discord import app_commands,Activity,ActivityType,Game,Intents,Interaction,Object
 
 with open('./config/settings.json',"r",encoding='utf-8') as f:
@@ -9,6 +9,7 @@ with open('./config/settings.json',"r",encoding='utf-8') as f:
 
 class client(commands.Bot):
     def __init__(self,**options):
+        self.index = -1
         super().__init__(
             command_prefix="-",
             intents = Intents.all(),
@@ -26,8 +27,16 @@ class client(commands.Bot):
 
     async def on_ready(self):
         print('Music bot已上線 上線ID為:{0.user}'.format(bot))
-        watching = Activity(type = ActivityType.playing, name = f"輸入 /play 開始 | 服務於 {len(bot.guilds)} 個伺服器")
-        await bot.change_presence(activity = watching)
+        if not self.change_announcement.is_running():
+            self.change_announcement.start() 
+        
+    @tasks.loop(seconds = settings['announcement']['interval'])
+    async def change_announcement(self):
+        self.index += 1
+        if self.index == len(settings['announcement']['contents']):
+            self.index = 0
+        activities = Activity(type = ActivityType.playing, name = settings['announcement']['contents'][self.index].format(server_count = len(bot.guilds)))
+        await bot.change_presence(activity = activities)
 
     # @app_commands.command(name = "load", description="載入插件")
     # @app_commands.guilds(Object(id = 469507920808116234))
