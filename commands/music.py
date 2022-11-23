@@ -7,6 +7,27 @@ from discord.ext import commands,tasks
 from discord.ui import Button,View,Modal,TextInput,Select
 import wavelink
 import yarl
+import abc
+
+class CustomView(View,metaclass=abc.ABCMeta):
+    def __init__(self,timeout):
+        super().__init__(timeout = timeout)
+
+    def add(self,item,callback=None):
+        self.add_item(item)
+        if callback is not None:
+            item.callback = callback
+        return item
+
+    @abc.abstractmethod
+    def add_base_button(self):
+        return NotImplemented
+    
+    @abc.abstractmethod
+    def ui_control(self):
+        return NotImplemented
+
+import commands.Manager as Manager
 import lib.notification as nc
 import lib.mysql as mysql
 
@@ -18,13 +39,6 @@ OPTIONS = {
     "4️⃣": 3,
     "5️⃣": 4
 }
-
-class CustomView(View):
-    def add(self,item,callback=None):
-        self.add_item(item)
-        if callback is not None:
-            item.callback = callback
-        return item
 
 class VolumeModal(Modal):
     def __init__(self,control_panel):
@@ -118,6 +132,10 @@ class ControlView(CustomView):
     class CycleType(Enum):
         SINGLE = "單首"
         ALL = "全部"
+    
+    class PlayType(Enum):
+        PLAYING = "播放中"
+        PAUSING = "暫停中"
 
     async def play_and_pause(self,interaction:Interaction):
         if not self.player.is_paused():
@@ -264,7 +282,10 @@ class ControlView(CustomView):
         else:
             self.add(Button(style = ButtonStyle.green,label = "循環模式:全部",emoji="🔁"),self.cycle_type_callback)
         self.add(Button(style = ButtonStyle.primary,label = "當前歌單",emoji="📢"),self.get_current_song_list)
-        
+
+    def add_base_button(self):
+        pass
+
     @property
     def message(self):
         return self._message
@@ -280,7 +301,21 @@ class ControlView(CustomView):
     @tasks.loop(seconds = 5)
     async def refresh_panel(self):
         await self.message.edit(content = None,embed=self.create_embed(),view=self)
-        
+
+    def toEmbed(self,bot:commands.Bot,guild_id:int,index:int = 0) -> Embed:
+        guild = bot.get_guild(guild_id)
+        miko = Embed(colour = Colour.random())
+        miko.set_author(name = f"📻第 {index+1} 個音樂控制面板:")
+        miko.set_thumbnail(url = self.history_thumbnails[self.position-1])
+        miko.add_field(name = "🎯伺服器名稱:",value = guild.name,inline = False)
+        miko.add_field(name = "👑擁有者:",value = f"{guild.owner}",inline = False)
+        miko.add_field(name = "⚡當前狀態:",value = f"{self.PlayType.PLAYING.value}" if not self.player.is_paused() else f"{self.PlayType.PAUSING.value}",inline = False)
+        miko.add_field(name = "🎧現正播放中:",value = self.player.source.info.get("title"),inline = False)
+        miko.add_field(name="⏩播放速度:",value=f"{self.speed}x")
+        miko.add_field(name = "🔊音量:",value = f"{self.get_volume()}%",inline=False)
+        miko.add_field(name = "🚩目前序位:",value = self.get_current_queue())
+        return miko        
+
 async def create_selectsongview(interaction,tracks,player,control_panel):
     select_song = SelectSongView(tracks,player,control_panel) 
     miko = await select_song._init(interaction)
@@ -368,7 +403,7 @@ class SelectSongView(CustomView):
             self.children[7].disabled = True
 
 class Music(commands.Cog):
-    def __init__(self,bot):
+    def __init__(self,bot:commands.Bot):
         self.bot = bot
         self.players = {}
         self.control_panels = {} 
@@ -377,7 +412,7 @@ class Music(commands.Cog):
         self.watch_list = {} #直播觀察清單
         bot.loop.create_task(self.create_nodes())
     
-    notification_group = app_commands.Group(name='notification', description='channel')
+    notification_group = app_commands.Group(name='notification', description='channel',guild_only = True)
 
     @notification_group.command(name = "add", description="新增頻道直播/新片通知")
     async def add(self,interaction: Interaction,platform:str,channel_url:str):
@@ -458,14 +493,8 @@ class Music(commands.Cog):
         channel_embeds = []
         channels:list = self.get_subscribe_channel(interaction.guild_id)
         for (index,channel) in enumerate(channels):
-            miko = Embed(colour = Colour.random())
-            miko.set_author(name = f"第 {index+1} 個頻道:")
-            miko.set_thumbnail(url = channel.thumbnail)
-            miko.add_field(name = "🎯名稱:",value = channel.title,inline=False)
-            miko.add_field(name = "🔗網址:",value = f"https://www.youtube.com/channel/{channel.id}" if channel.platform == "youtube" else f"https://www.twitch.tv/{channel.id}",inline=False)
-            miko.add_field(name = "🚩平台:",value = f"<:yt:1032640435375583342>Youtube" if channel.platform == "youtube" else f"<:th:1032831426959245423>Twitch")
-            channel_embeds.append(miko)
-        await interaction.response.send_message(content=f"此群訂閱的所有頻道(共{len(channels)}個):",embeds=channel_embeds,ephemeral=True)
+            channel_embeds.append(channel.toEmbed(index))
+        await interaction.response.send_message(content=f"此群訂閱的所有頻道(共{len(channels)}個):",embeds = channel_embeds[0:10],view = Manager.ObjectEmbedView(channel_embeds),ephemeral=True)
 
     def get_subscribe_channel(self,guild_id:int) -> list:
         if not self.subscribe_channel_list.__contains__(guild_id):  
@@ -503,7 +532,7 @@ class Music(commands.Cog):
     @commands.Cog.listener()
     async def on_wavelink_track_end(self, player: wavelink.Player, track:wavelink.Track, reason):
         guild_id = list(self.players.keys())[list(self.players.values()).index(player)]
-        control_panel = self.control_panels[guild_id]
+        control_panel:ControlView = self.control_panels[guild_id]
         control_panel.speed = 1.0
         await player.set_filter(wavelink.Filter(timescale=wavelink.Timescale(speed=float(1.0))),seek=True)
         if not player.queue.is_empty: #隊列不為空
@@ -546,7 +575,8 @@ class Music(commands.Cog):
         control_panel.position += 1
         await control_panel.message.edit(embed=control_panel.create_embed(),view=control_panel)
 
-    @app_commands.command(name = "play", description="播放音樂") 
+    @app_commands.guild_only()
+    @app_commands.command(name = "play", description="播放音樂")
     async def play(self,interaction:Interaction,query:str): 
         if interaction.user.voice is None:
             await interaction.response.send_message("請先加入語音頻道，再輸入指令",ephemeral=True)

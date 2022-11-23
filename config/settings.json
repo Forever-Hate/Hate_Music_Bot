@@ -1,6 +1,7 @@
 {
   "application_id": 944801895665516564,
   "token": "",
+  "manage_server_id":469507920808116234,
   "Mysql":{
     "database": "discord_music_bot",
     "table_latest": "latest_video",
@@ -12,10 +13,11 @@
     "password": ""
   },
   "announcement":{
-    "contents": ["輸入 /play 開始 | 服務於 {server_count} 個伺服器","直播/新影片通知上線!! 快輸入 /notification 試用"],
+    "contents": ["輸入 /play 開始 | 服務於 {server_count} 個伺服器","現在仍為開發期間，有任何使用上的問題，請見諒"],
     "interval": 3600
   },
   "notification":{
-    "interval": 900
+    "interval": 900,
+    "refresh_live_interval":30
   }
 }

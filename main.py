@@ -22,7 +22,6 @@ class client(commands.Bot):
         for filename in os.listdir('./commands'):
             if filename.endswith('.py'):
                 await bot.load_extension(f'commands.{filename[:-3]}')
-            await bot.tree.sync() #guild = discord.Object(id = 469507920808116234) #目前所有指令皆為全域指令(非特定伺服器)
 
 
     async def on_ready(self):
