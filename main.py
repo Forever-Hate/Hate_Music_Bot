@@ -1,8 +1,8 @@
-import json
-import os
 import aiohttp
 from discord.ext import commands,tasks
-from discord import app_commands,Activity,ActivityType,Game,Intents,Interaction,Object
+from discord import Activity, ActivityType, Intents
+import json
+import os
 
 with open('./config/settings.json',"r",encoding='utf-8') as f:
     settings = json.load(f)
@@ -27,7 +27,7 @@ class client(commands.Bot):
     async def on_ready(self):
         print('Music bot已上線 上線ID為:{0.user}'.format(bot))
         if not self.change_announcement.is_running():
-            self.change_announcement.start() 
+            self.change_announcement.start()
         
     @tasks.loop(seconds = settings['announcement']['interval'])
     async def change_announcement(self):
@@ -55,11 +55,8 @@ class client(commands.Bot):
     #     bot.reload_extension(f'commands.{extension}')
     #     await interaction.response.send_message(f'重新讀入{extension}完成',ephemeral=True)
 
-
-
-#bot = commands.Bot(command_prefix=settings['prefix'])
-bot = client()
 if __name__ == "__main__":
+   bot = client()
    bot.run(settings['token'])
 
 
