@@ -4,14 +4,14 @@ from discord import Activity, ActivityType, Intents
 import json
 import os
 
-with open('./config/settings.json',"r",encoding='utf-8') as f:
+with open('./config/settings.json',"r",encoding = 'utf-8') as f:
     settings = json.load(f)
 
 class client(commands.Bot):
     def __init__(self,**options):
         self.index = -1
         super().__init__(
-            command_prefix="-",
+            command_prefix = "-",
             intents = Intents.all(),
             application_id = settings['application_id'],
             **options

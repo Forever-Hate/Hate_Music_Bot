@@ -287,7 +287,7 @@ class ControlView(CustomView):
     async def refresh_webhook(self):
         self.message = await self.channel.fetch_message(self.message_id)
 
-    @tasks.loop(seconds=5)
+    @tasks.loop(seconds = 5)
     async def refresh_panel(self):
         await self.message.edit(content=None, embed=self.create_embed(), view=self)
 
@@ -320,27 +320,29 @@ class SelectPlaylistView(CustomView):
             super().__init__(title="建立新的播放清單:")
             self.view = view
             self.playlists = view.playlists
-            self.name = TextInput(label='請輸入名字:', style = TextStyle.short)
+            self.name = TextInput(label='請輸入名字:(上限45個字)', style = TextStyle.short)
             self.add_item(self.name)
 
         async def on_submit(self, interaction: Interaction):
             await interaction.response.defer(ephemeral = True)
-            current = not self.playlists.__contains__(self.name.value)
-            if current:
-                sql.create_new_playlist(self.name.value, interaction.user.id)
-                self.playlists[self.name.value] = Playlist([], interaction.user)
-            await interaction.followup.edit_message(message_id = interaction.message.id, content = "建立成功" if current else f"建立失敗，{self.name.value} 已存在",
-                                                    view = self.view, embed = await self.view.get_current_playlist_embed())
+            if len(self.name.value) <= 45:
+                current = not self.playlists.__contains__(self.name.value)
+                if current:
+                    sql.create_new_playlist(self.name.value, interaction.user.id)
+                    self.playlists[self.name.value] = Playlist([], interaction.user)
+                await interaction.followup.edit_message(message_id = interaction.message.id, content = "建立成功" if current else f"建立失敗，{self.name.value} 已存在",
+                                                        view = self.view, embed = await self.view.get_current_playlist_embed())
+            else:
+                await interaction.followup.edit_message(message_id = interaction.message.id, content = "已超過規定字數，請重新輸入",
+                                                        view = self.view, embed = await self.view.get_current_playlist_embed())
 
     class Double_Check_Delete_Playlist_Modal(Modal):
         def __init__(self, view):
-            super().__init__(title="再次確認刪除清單:")
+            super().__init__(title = "再次確認刪除清單:")
             self.view = view
             self.playlists = view.playlists
             self.current_playlist = view.current_playlist
-            self.name = TextInput(
-                label=f'請再次輸入名字({self.current_playlist[0]}):', style = TextStyle.short)
-            print(self.current_playlist[0])
+            self.name = TextInput(label = f'請再次輸入名字:', style = TextStyle.short , placeholder = self.current_playlist[0])
             self.add_item(self.name)
 
         async def on_submit(self, interaction: Interaction):
@@ -376,6 +378,7 @@ class SelectPlaylistView(CustomView):
     def ui_control(self):
         self.children[1].disabled = False
         self.children[2].disabled = False
+        self.children[4].disabled = False
         self.children[5].disabled = False
         self.children[6].disabled = False
         self.children[7].disabled = False
@@ -384,11 +387,13 @@ class SelectPlaylistView(CustomView):
         if (len(self.playlists)-1 == self.position) or (len(self.playlists) == 0):
             self.children[2].disabled = True
         if (len(self.playlists) == 0):
+            self.children[4].disabled = True
             self.children[5].disabled = True
             self.children[6].disabled = True
             self.children[7].disabled = True
-        if len(self.current_playlist[1].song_list) == 0:
-            self.children[7].disabled = True
+        if self.current_playlist is not None:
+            if (len(self.current_playlist[1].song_list) == 0):
+                self.children[7].disabled = True
 
     def add_base_button(self):
         self.clear_items()
