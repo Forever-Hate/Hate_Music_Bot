@@ -11,7 +11,7 @@ from enum import Enum
 from discord import Object, app_commands, ButtonStyle, Colour, Embed, Interaction , TextStyle , User, WebhookMessage
 from discord.ext import commands, tasks
 from discord.ui import Button, Modal, TextInput
-from lib.common import Channel, CustomView, Guild, Live, ObjectEmbedView, Playlist, STSong, YTSong,Platform,get_string_by_platform
+from lib.common import Channel, CustomView, Guild, Live, ObjectEmbedView, Playlist, STSong, YTSong,Platform,get_string_by_platform,get_platform_info_by_string
 from typing import Dict, List, Tuple, Union
 from wavelink.ext import spotify
 
@@ -996,7 +996,7 @@ class Music(commands.Cog):
             return
         await interaction.response.defer(ephemeral = True)
         message = await interaction.followup.send(f"搜尋中...", ephemeral = True)
-        notice = await nc.create_channel(platform, channel_url)
+        notice = await nc.create_channel(get_platform_info_by_string(platform), channel_url)
         g = Guild(interaction.guild_id, interaction.channel.id,interaction.user.voice.channel.id)
         channels: list = self.get_subscribe_channel(interaction.guild_id)
         if self.notification_channels.__contains__(notice.id):
@@ -1023,8 +1023,8 @@ class Music(commands.Cog):
     @add.autocomplete('platform')
     async def add_autocomplete_callback(self, interaction: Interaction, current: str):
         return [
-            app_commands.Choice(name='youtube', value=Platform.YOUTUBE),
-            app_commands.Choice(name='twitch', value=Platform.TWITCH)
+            app_commands.Choice(name='youtube', value='youtube'),
+            app_commands.Choice(name='twitch', value='twitch')
         ]
 
     @notification_group.command(name="delete", description="移除頻道直播/新片通知")
@@ -1357,3 +1357,4 @@ class Music(commands.Cog):
 async def setup(bot: commands.Bot):
     await bot.add_cog(Music(bot)) #目前為全域都有安裝此模組(非特定伺服器) ,guilds = [Object(id = 469507920808116234)]
     #await bot.tree.sync() #guild = Object(id = 469507920808116234)
+    #https://about.abstractumbra.dev/discord.py/2023/01/29/sync-command-example.html 參考資料
