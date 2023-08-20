@@ -1,17 +1,17 @@
 import asyncio
-from bs4 import BeautifulSoup
-import commands.Music as Music
+import requests
 import datetime
+import json
+import re
+import wavelink
+import commands.music as Music
+import lib.sql as sql
+from bs4 import BeautifulSoup
 from discord import ButtonStyle, Colour, Embed, Interaction, WebhookMessage
 from discord.ext import commands,tasks 
-from discord.ui import Button
-import json
-from lib.common import Channel, CustomView, Guild, Live, Playlist, Song
-import lib.sql as sql
-import re
-import requests
 from typing import Dict, List, Tuple, Union
-import wavelink
+from discord.ui import Button
+from lib.common import Channel, CustomView, Guild, Live, Playlist, YTSong , Platform
 
 with open('./config/settings.json', "r", encoding='utf-8') as f:
     settings = json.load(f)
@@ -22,9 +22,9 @@ class CheckView(CustomView):
         super().__init__(timeout = None)
         self.live = live
         self.bot = bot
-        self.channels = channels
-        self.already_joined_channels = {}
-        self.watch_list = watch_list
+        self.channels = channels #該直播訂閱的guild
+        self.already_joined_channels = {} #已經加入隊列的guild
+        self.watch_list = watch_list #正在被觀察的直播dict
         self.players = players
         self.control_panels = control_panels
         self.message = None
@@ -35,7 +35,7 @@ class CheckView(CustomView):
         miko = Embed(colour=Colour.random())
         miko.set_thumbnail(url = self.live.thumbnail)
         miko.set_author(name=f"📢第 {index+1} 個觀察目標:")
-        miko.add_field(name = "🎯標題:", value = self.live.title , inline = False)
+        miko.add_field(name="🎯標題:", value=self.live.title , inline=False)
         miko.add_field(name = "👑頻道名稱:", value = self.live.channel_title, inline = False)
         miko.add_field(name = "🔗url:", value = self.live.url, inline = False)
         miko.add_field(name = "⌛開始時間:", value = datetime.datetime.fromtimestamp(self.live.start_time).strftime('%Y年%m月%d日 %H點%M分%S秒'), inline = False)
@@ -45,8 +45,8 @@ class CheckView(CustomView):
         return miko
 
     def add_base_button(self):
-        self.add(Button(style = ButtonStyle.green,label = "新增至隊列", emoji = "✅"), self.add_in_query)
-        self.add(Button(style = ButtonStyle.red, label = "移除通知",emoji = "❌"), self.remove_notification)
+        self.add(Button(style = ButtonStyle.green,label = "新增至隊列", emoji = "✅"), self.__add_in_query)
+        self.add(Button(style = ButtonStyle.red, label = "移除通知",emoji = "❌"), self.__remove_notification)
 
     def ui_control(self):
         pass
@@ -63,7 +63,7 @@ class CheckView(CustomView):
     @tasks.loop(seconds = settings['notification']['refresh_live_interval'])
     async def join(self):
         try:
-            song = Song(self.live.url)
+            song = YTSong(self.live.url)
             result = await song.init()
             if isinstance(result,tuple):
                 self.live.reconnection_times += 1
@@ -74,17 +74,19 @@ class CheckView(CustomView):
                 control_panels = self.control_panels
                 for key in self.already_joined_channels.keys():
                     history = control_panels[key].history_song
-                    for index, song in enumerate(history):
-                        if not isinstance(song, Music.HistorySong) and song.title == song.title:
-                            history[index] = Music.HistorySong(song, self.bot.user)
+                    for index, item in enumerate(history):
+                        #確認是否已在隊列中
+                        if not isinstance(item, Music.HistorySong) and item.title == song.title:
+                            history[index] = Music.HistorySong(song, self.bot.user) #把先前加入的live物件替換
                             if index == control_panels[key].position - 1:  # 當前正在等待
                                 await control_panels[key].player.play(song.track)
                             else:
                                 control_panels[key].player.queue.put_at_index(index, song.track)
-                self.watch_list.pop(self.live.title)
+                self.watch_list.pop(self.live.title) #已取得直播後就從觀察清單移除
                 print(f"          已取得{self.live.title}串流")
                 print(f"~~~~~~~~~~結束監測直播:{self.live.title}~~~~~~~~~~")
-        finally:  # 先暫時不修理
+        except Exception:  # 先暫時不修理
+            print("會員限定直播")
             pass
             # if "members-only" in str(e):
             #     self.join.cancel()
@@ -115,23 +117,23 @@ class CheckView(CustomView):
                     control_panels[key].channel = self.bot.get_channel(value['obj'].text_id)
                     control_panels[key].history_song.append(self.live)
                     control_panels[key].history_thumbnails.append(self.live.thumbnail)
-                    control_panels[key].length += 1
                     control_panels[key].message: WebhookMessage = await control_panels[key].channel.send(embed=control_panels[key].create_embed(), view=control_panels[key])
                     control_panels[key].message_id = control_panels[key].message.id
-                    control_panels[key].refresh_webhook.start()
-                    control_panels[key].refresh_panel.start()
+                    if not control_panels[key].refresh_webhook.is_running():
+                        control_panels[key].refresh_webhook.start()
+                    if not control_panels[key].refresh_panel.is_running():
+                        control_panels[key].refresh_panel.start()
                 else:
                     players.pop(key)
             else:
                 control_panel: Music.ControlView = control_panels.get(key)
                 control_panel.history_song.append(self.live)
                 control_panel.history_thumbnails.append(self.live.thumbnail)
-                control_panel.length += 1
                 await control_panel.message.edit(content = f"<@{self.bot.user.id}>已新增等待 {self.live.channel_title} 直播開始至隊列中", embed = control_panel.create_embed(), view = control_panel)
             await self.message.delete()
-        self.already_joined_channels.update(self.channels)
+        self.already_joined_channels.update(self.channels) #將B值更新至A
 
-    async def add_in_query(self, interaction: Interaction):
+    async def __add_in_query(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
         await self.message.delete()
         players = self.players
@@ -141,16 +143,15 @@ class CheckView(CustomView):
             players[key] = await self.bot.get_channel(self.channels[interaction.guild_id]['obj'].voice_id).connect(cls=wavelink.Player)
             if players[key].is_connected():
                 control_panels[key] = Music.ControlView(players.get(key))
-                control_panels[key].channel = self.bot.get_channel(
-                    self.channels[interaction.guild_id]['obj'].text_id)
+                control_panels[key].channel = self.bot.get_channel(self.channels[interaction.guild_id]['obj'].text_id)
                 control_panels[key].history_song.append(self.live)
-                control_panels[key].history_thumbnails.append(
-                    self.live.thumbnail)
-                control_panels[key].length += 1
+                control_panels[key].history_thumbnails.append(self.live.thumbnail)
                 control_panels[key].message: WebhookMessage = await control_panels[key].channel.send(embed=control_panels[key].create_embed(), view=control_panels[key])
                 control_panels[key].message_id = control_panels[key].message.id
-                control_panels[key].refresh_webhook.start()
-                control_panels[key].refresh_panel.start()
+                if not control_panels[key].refresh_webhook.is_running():
+                        control_panels[key].refresh_webhook.start()
+                if not control_panels[key].refresh_panel.is_running():
+                    control_panels[key].refresh_panel.start()
                 await interaction.followup.send(f"已新增等待 {self.live.channel_title} 直播開始至隊列中", ephemeral=True)
             else:
                 players.pop(key)
@@ -158,20 +159,17 @@ class CheckView(CustomView):
             control_panel: Music.ControlView = control_panels.get(key)
             control_panel.history_song.append(self.live)
             control_panel.history_thumbnails.append(self.live.thumbnail)
-            control_panel.length += 1
             await control_panel.message.edit(content=f"<@{interaction.user.id}>已新增等待 {self.live.channel_title} 直播開始至隊列中", embed=control_panel.create_embed(), view=control_panel)
             await interaction.followup.send(f"已新增等待 {self.live.channel_title} 直播開始至隊列中", ephemeral=True)
-        self.already_joined_channels[interaction.guild_id] = self.channels.pop(
-            interaction.guild_id)
+        self.already_joined_channels[interaction.guild_id] = self.channels.pop(interaction.guild_id)
 
-    async def remove_notification(self, interaction: Interaction):
+    async def __remove_notification(self, interaction: Interaction):
         await self.message.delete()
         self.channels.pop(interaction.guild_id)
         if not self.channels and not self.already_joined_channels:  # 當等待直播隊列與已加入頻道隊列為空時
             self.time_to_start.cancel()
             self.watch_list.pop(self.live.title)
         await interaction.response.send_message(f"已移除 {self.live.title} 直播通知", ephemeral=True)
-
 
 class Video():
 
@@ -188,7 +186,6 @@ class Video():
         print("- url:", self.url)
         print("- 縮圖:", self.thumbnail)
         print("===========================================")
-
 
 async def get_video_datetime(video_id) -> datetime.datetime:
     videos_html = requests.get(
@@ -214,7 +211,7 @@ async def get_video_datetime(video_id) -> datetime.datetime:
 
     return dateTime
 
-
+#取得最新影片(影片)
 async def get_latest_video_from_videos(url) -> Union[Video,None]:
     videos_html = requests.get(f"{url}/videos").text
     soup = BeautifulSoup(videos_html, "html.parser")
@@ -230,8 +227,6 @@ async def get_latest_video_from_videos(url) -> Union[Video,None]:
         for tab_item in data['contents']['twoColumnBrowseResultsRenderer']['tabs']:
             if tab_item['tabRenderer']['title'] == "影片":
                 for item in tab_item['tabRenderer']['content']['richGridRenderer']['contents']:
-                    # print(item['gridVideoRenderer'])
-                    #print(re.findall('(?<="url":").*?(?=")', videos_html)[2])
                     if item['richItemRenderer']['content']['videoRenderer']['thumbnailOverlays'][0]['thumbnailOverlayTimeStatusRenderer']['style'] == "LIVE":
                         continue
                     else:
@@ -246,24 +241,24 @@ async def get_latest_video_from_videos(url) -> Union[Video,None]:
         return None
     return Video(title, url, thumbnail, await get_video_datetime(video_id), "videos")
 
-
+#取得最新影片(直播)
 async def get_latest_video_from_streams(url) -> Union[Video,None]:
     videos_html = requests.get(f"{url}/streams").text
     soup = BeautifulSoup(videos_html, "html.parser")
-    data = re.search(
-        r"var ytInitialData = ({.*});", str(soup)).group(1)
+    data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
     try:
         data = json.loads(data)
     except json.JSONDecodeError:
         data = re.search(r"(.*);</script>", data).group(1)
         data = json.loads(data)
-
+    title = ""
+    thumbnail = ""
+    video_id = ""
     try:
         for tab_item in data['contents']['twoColumnBrowseResultsRenderer']['tabs']:
             if tab_item['tabRenderer']['title'] == "直播":
                 for item in tab_item['tabRenderer']['content']['richGridRenderer']['contents']:
-                    style = item['richItemRenderer']['content']['videoRenderer'][
-                        'thumbnailOverlays'][0]['thumbnailOverlayTimeStatusRenderer']['style']
+                    style = item['richItemRenderer']['content']['videoRenderer']['thumbnailOverlays'][0]['thumbnailOverlayTimeStatusRenderer']['style']
                     if style == "LIVE" or style == "UPCOMING":
                         continue
                     else:
@@ -273,12 +268,15 @@ async def get_latest_video_from_streams(url) -> Union[Video,None]:
                         url = f"https://www.youtube.com/watch?v={video_id}"
                         break
                 break
+        #表示只有一個直播影片而且是待播中或直播中
+        if title == "" or thumbnail == "" or video_id == "":
+            return None
     except KeyError as e:
-        print(e)
+        print("get_latest_video_from_streams 取得失敗:",e)
         return None
     return Video(title, url, thumbnail, await get_video_datetime(video_id), "streams")
 
-
+#取得最新影片(short)
 async def get_latest_video_from_Shorts(url) -> Union[Video,None]:
     videos_html = requests.get(f"{url}/shorts").text
     soup = BeautifulSoup(videos_html, "html.parser")
@@ -289,7 +287,9 @@ async def get_latest_video_from_Shorts(url) -> Union[Video,None]:
     except json.JSONDecodeError:
         data = re.search(r"(.*);</script>", data).group(1)
         data = json.loads(data)
-
+    video_id = ""
+    thumbnail = ""
+    title = ""
     try:
         for tab_item in data['contents']['twoColumnBrowseResultsRenderer']['tabs']:
             if tab_item['tabRenderer']['title'] == "Shorts":
@@ -299,11 +299,13 @@ async def get_latest_video_from_Shorts(url) -> Union[Video,None]:
                     title = item['richItemRenderer']['content']['reelItemRenderer']['headline']['simpleText']
                     url = f"https://www.youtube.com/shorts/{video_id}"
                 break
+        if video_id == "" or thumbnail == "" or title == "":
+            return None
     except KeyError as e:
         return None
     return Video(title, url, thumbnail, await get_video_datetime(video_id), "Shorts")
 
-
+#取得最新影片(總)
 async def get_latest_video(channel_url: str) -> Union[Video,None]:
     videos_html = requests.get(channel_url).text
     soup = BeautifulSoup(videos_html, "html.parser")
@@ -367,8 +369,8 @@ async def get_latest_video(channel_url: str) -> Union[Video,None]:
         return None
 
 
-async def create_channel(platform: str, URL: str) -> Channel:
-    if platform == "youtube":
+async def create_channel(platform: Platform, URL: str) -> Channel:
+    if platform == Platform.YOUTUBE:
         soup = BeautifulSoup(requests.get(URL).content, "html.parser")
         data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
         try:
@@ -401,24 +403,22 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
         miko = Embed(colour=Colour.random())
         miko.set_author(name="🎧新的影片發布:")
         miko.set_thumbnail(url=channel.thumbnail)
-        miko.add_field(name="<:yt:1032640435375583342>頻道:",
+        miko.add_field(name=f"{Platform.YOUTUBE.value}頻道:",
                        value=channel.title)
         miko.add_field(name="🎯名稱:", value=video.title)
         miko.add_field(name="🔗網址:", value=channel.latest_video, inline=False)
         miko.set_image(url=video.thumbnail)
         return miko
-
-    print(
-        f"------------------現在時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp()))}------------------")
-    for key, value in notification_channels.items():
-        channel_url = f"https://www.youtube.com/channel/{key}"
+    print(f"------------------現在時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp()))}------------------")
+    for channel_id, value in notification_channels.items():
+        channel_url = f"https://www.youtube.com/channel/{channel_id}"
         index_html = requests.get(channel_url).text
-        c: Channel = value['obj']
-        print("頻道:", c.title)
+        live_channel: Channel = value['obj']
+        subscribe_guilds:dict[int,Guild] = value['channels']
+        print("頻道:", live_channel.title)
         if re.search('(?<="startTime":").*?(?=")', index_html) is not None:
             soup = BeautifulSoup(index_html, "html.parser")
-            data = re.search(
-                r"var ytInitialData = ({.*});", str(soup)).group(1)
+            data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
             videos: List[Live] = []
             try:
                 data = json.loads(data)
@@ -444,7 +444,7 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
                                                     video['videoRenderer']['upcomingEventData']['startTime'])
                                                 thumbnail = video['videoRenderer']['thumbnail']['thumbnails'][3]['url']
                                                 videos.append(
-                                                    Live(title, c.title, url, start_time, thumbnail, c.platform))
+                                                    Live(title, live_channel.title, url, start_time, thumbnail, live_channel.platform))
                                     else:  # 一個以上影片會出現
                                         video_list = section_item['itemSectionRenderer']['contents'][0][
                                             'shelfRenderer']['content']['horizontalListRenderer']['items']
@@ -456,7 +456,7 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
                                                     video['gridVideoRenderer']['upcomingEventData']['startTime'])
                                                 thumbnail = video['gridVideoRenderer']['thumbnail']['thumbnails'][3]['url']
                                                 videos.append(
-                                                    Live(title, c.title, url, start_time, thumbnail, c.platform))
+                                                    Live(title, live_channel.title, url, start_time, thumbnail, live_channel.platform))
                                     break
                                 # 影片未分類時出現
                                 elif section_item['itemSectionRenderer']['contents'][0]['shelfRenderer']['title']['runs'][0]['text'] == "上傳的影片":
@@ -469,46 +469,48 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
                                             start_time = int(
                                                 video['gridVideoRenderer']['upcomingEventData']['startTime'])
                                             thumbnail = video['gridVideoRenderer']['thumbnail']['thumbnails'][3]['url']
-                                            videos.append(
-                                                Live(title, c.title, url, start_time, thumbnail, c.platform))
+                                            videos.append(Live(title, live_channel.title, url, start_time, thumbnail, live_channel.platform))
                                     break
                         break
             except KeyError:
                 print("----------直播資訊取得失敗----------")
-            for v in videos:  # 待修復:同一時間點的直播 會造成前一占據的會被忽視
-                v.toString()
+            for video in videos:  # 待修復:同一時間點的直播 會造成前一占據的會被忽視
+                video.toString()
                 # 小於一天內開播
-                if v.start_time <= int((datetime.datetime.now() + datetime.timedelta(days=1)).timestamp()):
-                    if watch_list.__contains__(v.title):  # 舊的直播
-                        waiting_channels = watch_list[v.title].channels
+                if video.start_time <= int((datetime.datetime.now() + datetime.timedelta(days=1)).timestamp()):
+                    if watch_list.__contains__(video.title):  # 舊的直播
+                        waiting_channels = watch_list[video.title].channels
                         print("waiting_channels_before:", waiting_channels)
-                        for (id, guild) in value['channels'].items():
+                        for id, guild in subscribe_guilds.items():
                             # 新的頻道訂閱群
                             if not waiting_channels.__contains__(id):
                                 waiting_channels[id] = {
                                     "obj": guild
                                 }
                                 channel = await bot.fetch_channel(guild['obj'].text_id)
-                                watch_list[v.title].message = await channel.send(embed=v.create_embed(), view=watch_list[v.title])
+                                watch_list[video.title].message = await channel.send(embed=video.create_embed(), view=watch_list[video.title])
                         print("waiting_channels_after:", waiting_channels)
                     else:  # 新的直播加入
-                        watch_list[v.title] = CheckView(
-                            v, dict(value['channels']), bot, watch_list, players, control_panels)
-                        for (id, guild) in value['channels'].items():
+                        watch_list[video.title] = CheckView(video, subscribe_guilds, bot, watch_list, players, control_panels)
+                        for id,guild in subscribe_guilds.items():
                             channel = await bot.fetch_channel(guild['obj'].text_id)
-                            watch_list[v.title].message = await channel.send(embed=v.create_embed(), view=watch_list[v.title])
-                    pass
+                            watch_list[video.title].message = await channel.send(embed=video.create_embed(), view=watch_list[video.title])
+        
 
+
+
+
+
+        #新影片上架
         video: Video = await get_latest_video(channel_url)
         if video is not None:
-            if c.latest_video != video.url:
-                print("原影片url:", c.latest_video)
-                c.latest_video = video.url
+            if live_channel.latest_video != video.url:
+                print("原影片url:", live_channel.latest_video)
+                live_channel.latest_video = video.url
                 for (id, guild) in value['channels'].items():
                     channel = await bot.fetch_channel(guild['obj'].text_id)
-                    await channel.send(embed=create_new_video_embed(c, video))
-                sql.update_latest_video(c.title, video.url)
+                    await channel.send(embed=create_new_video_embed(live_channel, video))
+                sql.update_latest_video(live_channel.title, video.url)
                 print("新片上架")
         print("==========================下一個頻道==========================")
-    print(
-        f"----------------下次執行時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp())) + datetime.timedelta(seconds = settings['notification']['interval'])}----------------")
+    print(f"----------------下次執行時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp())) + datetime.timedelta(seconds = settings['notification']['interval'])}----------------")

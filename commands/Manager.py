@@ -1,8 +1,8 @@
+import json
+import os
 from discord.ext import commands
 from discord import app_commands,Interaction, Object
-import json
 from lib.common import ObjectEmbedView
-import os
 
 with open('./config/settings.json', "r", encoding='utf-8') as f:
     settings = json.load(f)
@@ -42,7 +42,7 @@ class Manager(commands.GroupCog, name = 'admin', description = '管理指令'):
         module_list = []
         for filename in os.listdir('./commands'):
             if filename.endswith('.py'):
-                module_list.append(app_commands.Choice(name = f'{filename[:-3]}', value = f'{filename[:-3]}'))
+                module_list.append(app_commands.Choice(name = f'{filename[:-3]}', value = f'{filename[:-3].capitalize()}'))
         return module_list
 
     @search.autocomplete('obj')

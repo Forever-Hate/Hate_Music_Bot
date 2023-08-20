@@ -1,10 +1,30 @@
 import abc
 import datetime
-from discord import ButtonStyle, Colour, Embed, Interaction, User
+from enum import Enum
+import json
+import requests
 from discord.ext import commands
 from discord.ui import Button, View
-from typing import List, Tuple, Union
-from wavelink import LavalinkException, LoadTrackError, NodePool, YouTubeTrack
+from discord import ButtonStyle, Colour, Embed, Interaction, User
+from typing import Dict, List, Tuple, Union
+from wavelink import NodePool, YouTubeTrack
+from wavelink.ext import spotify
+
+class Platform(Enum):
+    YOUTUBE = "<:yt:1032640435375583342>" 
+    SPOTIFY = "<:sp:1132579820681834559>"
+    TWITCH = "<:th:1032831426959245423>"
+     
+platform_mapping = {
+    "youtube": Platform.YOUTUBE,
+    "spotify": Platform.SPOTIFY,
+    "twitch":  Platform.TWITCH
+}
+def get_platform_info_by_string(s:str) -> Platform:
+    return platform_mapping.get(s)
+
+def get_string_by_platform(enum_value: Platform) -> str:
+    return next(key for key, value in platform_mapping.items() if value == enum_value)
 
 class CustomView(View, metaclass = abc.ABCMeta):
     def __init__(self, timeout):
@@ -54,7 +74,7 @@ class ObjectEmbedView(CustomView):
             self.children[1].disabled = True
 
 class Channel():
-    def __init__(self, id: str, title: str, thumbnail: str, latest_video: str, platform: str):
+    def __init__(self, id: str, title: str, thumbnail: str, latest_video: str, platform: Platform):
         self.id = id
         self.title = title
         self.thumbnail = thumbnail
@@ -66,11 +86,11 @@ class Channel():
         miko.set_author(name = f"第 {index+1} 個頻道:")
         miko.set_thumbnail(url = self.thumbnail)
         miko.add_field(name = "🎯名稱:", value = self.title, inline = False)
-        miko.add_field(name = "🔗網址:", value = f"https://www.youtube.com/channel/{self.id}" if self.platform == "youtube" 
+        miko.add_field(name = "🔗網址:", value = f"https://www.youtube.com/channel/{self.id}" if self.platform == Platform.YOUTUBE
                                                  else f"https://www.twitch.tv/{self.id}", inline = False)
         miko.add_field(name = "🎞️最新影片url:", value = self.latest_video, inline = False)
-        miko.add_field(name = "🚩平台:", value = f"<:yt:1032640435375583342>Youtube" if self.platform == "youtube" 
-                                                 else f"<:th:1032831426959245423>Twitch")
+        miko.add_field(name = "🚩平台:", value = f"{Platform.YOUTUBE.value}Youtube" if self.platform == Platform.YOUTUBE 
+                                                 else f"{Platform.TWITCH.value}Twitch")
         return miko
 
 class Guild():
@@ -92,7 +112,7 @@ class Guild():
 
 class Live():
 
-    def __init__(self, title: str, channel_title: str, url: str, start_time: int, thumbnail: str, platform: str):
+    def __init__(self, title: str, channel_title: str, url: str, start_time: int, thumbnail: str, platform: Platform):
         self.title = title
         self.channel_title = channel_title
         self.url = url
@@ -107,7 +127,7 @@ class Live():
         print("- 頻道名稱:", self.channel_title)
         print("- url:", self.url)
         print("- 開始時間:", datetime.datetime.fromtimestamp(self.start_time).strftime('%Y年%m月%d日 %H點%M分%S秒'))
-        print("- 距離開始還有:", self.start_time -int(datetime.datetime.now().timestamp()))
+        print("- 距離開始還有:", self.start_time -int(datetime.datetime.now().timestamp()),"秒")
         print("- 縮圖:", self.thumbnail)
         print("========================================")
 
@@ -126,20 +146,14 @@ class Live():
         miko = Embed(colour = Colour.random())
         miko.set_author(name = "🎧即將到來的直播:")
         miko.set_thumbnail(url = self.thumbnail)
-        miko.add_field(name = "<:yt:1032640435375583342>頻道:",value = self.channel_title)
+        miko.add_field(name = f"{Platform.YOUTUBE.value}頻道:",value = self.channel_title)
         miko.add_field(name = "🎯名稱:", value = self.title)
         miko.add_field(name = "🔗網址:", value = self.url, inline = False)
         miko.add_field(name = "⏰直播時間:", value = f"<t:{self.start_time}:f>")
         miko.add_field(name = "⌛距離開始直播:",value = f"<t:{self.start_time}:R>", inline = False)
         return miko
 
-class Playlist():
-
-    def __init__(self, song_list: list, creater: User):
-        self.song_list = song_list
-        self.creater = creater
-
-class Song():
+class YTSong():
 
     def __init__(self, url: str):
         self.url = url
@@ -150,8 +164,57 @@ class Song():
             self.title = self.track.title
             self.thumbnail = self.track.thumbnail
             self.duration = self.track.duration
-            self.duration_str = f'({str(int(self.track.duration/3600)).zfill(2)}:{str(int(self.track.duration/60%60)).zfill(2)}:{str(int(self.track.duration%60)).zfill(2)})'
-        except (LoadTrackError, LavalinkException) as e:
-            return (False , str(e))
+            self.duration_str = f"{self.duration // 1000 // 3600:02d}:{(self.duration // 1000 % 3600) // 60:02d}:{self.duration // 1000 % 60:02d}"
+        except (IndexError,ValueError) as e:
+            print("無法取得YT音樂，錯誤:",e)
+            return (False , "無效的網址，請重新輸入")
         else:
             return True
+
+class STSong():
+
+    def __init__(self, url: str):
+        self.url = url
+
+    async def init(self) -> Union[bool , Tuple[bool,str]]:
+        if spotify.decode_url(self.url) is None:
+            return (False , "無效的網址，請重新輸入")
+        else:
+            self.track = (await spotify.SpotifyTrack.search(query=self.url))[0]
+            self.id = self.track.id
+            self.url = f"https://open.spotify.com/track/{self.id}"
+            self.title = self.track.title
+            self.thumbnail = self.track.images[0]
+            self.duration = self.track.duration
+            self.duration_str = f"{self.track.duration // 1000 // 3600:02d}:{(self.track.duration // 1000 % 3600) // 60:02d}:{self.track.duration // 1000 % 60:02d}"
+            self.karaoke:bool = False
+            self.lyrics = await self.get_lyrics()
+            return True
+        
+    async def get_lyrics(self) -> Union[Dict[int,str],None]:
+        lyrics = {}
+        data = requests.get(f"https://spotify-lyric-api.herokuapp.com/?trackid={self.id}",timeout = 5).text
+        data = json.loads(data)
+        word = "" 
+        if 'message' not in data:
+            for index,lyric in enumerate(data["lines"]):
+                if lyric["words"] == "" and index != len(data['lines']) - 1:
+                    word = "♪"
+                else:
+                    word = bytes(lyric["words"], "utf-8").decode("unicode_escape").encode("iso-8859-1").decode("utf-8")
+                if data["syncType"] == "LINE_SYNCED":
+                    lyrics[int(lyric["startTimeMs"])] = word
+                    self.karaoke = True
+                else:
+                    lyrics[index] = word
+                    self.karaoke = False
+        else:
+            self.karaoke = False
+            lyrics = None
+        return lyrics
+        
+class Playlist():
+
+    def __init__(self, song_list: List[Union[YTSong,STSong]], creater: User):
+        self.song_list = song_list
+        self.creater = creater
