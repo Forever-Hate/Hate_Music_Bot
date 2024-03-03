@@ -193,8 +193,11 @@ class STSong():
         
     async def get_lyrics(self) -> Union[Dict[int,str],None]:
         lyrics = {}
-        data = requests.get(f"https://spotify-lyric-api.herokuapp.com/?trackid={self.id}",timeout = 5).text
-        data = json.loads(data)
+        try:
+            data = requests.get(f"https://spotify-lyric-api-984e7b4face0.herokuapp.com/?trackid={self.id}",timeout = 5).text
+            data = json.loads(data)
+        except Exception:
+            return None
         word = "" 
         if 'message' not in data:
             for index,lyric in enumerate(data["lines"]):

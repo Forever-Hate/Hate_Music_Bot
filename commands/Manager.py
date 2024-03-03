@@ -1,11 +1,9 @@
-import json
 import os
 from discord.ext import commands
 from discord import app_commands,Interaction, Object
 from lib.common import ObjectEmbedView
 
-with open('./config/settings.json', "r", encoding='utf-8') as f:
-    settings = json.load(f)
+MANAGE_SERVER_ID = os.getenv('MANAGE_SERVER_ID')
 
 class Manager(commands.GroupCog, name = 'admin', description = '管理指令'):
     def __init__(self, bot:commands.Bot):
@@ -50,10 +48,7 @@ class Manager(commands.GroupCog, name = 'admin', description = '管理指令'):
         obj_list = [app_commands.Choice(name = 'notification_channels', value = 'notification_channels'),
                     app_commands.Choice(name = 'control_panels', value = 'control_panels'),
                     app_commands.Choice(name = 'watch_list', value = 'watch_list')]
-        # for variable in interaction.client.get_cog(f"{interaction.namespace['module']}").__dict__.keys():
-        #     if not variable.startswith("_"):
-        #         obj_list.append(app_commands.Choice(name=f'{variable}', value=f'{variable}'))
         return obj_list
 
 async def setup(bot: commands.Bot):
-    await bot.add_cog(Manager(bot), guilds = [Object(id = settings['manage_server_id'])])
+    await bot.add_cog(Manager(bot), guilds = [Object(id = MANAGE_SERVER_ID)])

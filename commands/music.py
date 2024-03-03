@@ -1,10 +1,11 @@
 import asyncio
 import datetime
-import json
-import re
-import yarl
+import os
 import random
+import re
+import time
 import wavelink
+import yarl
 import lib.notification as nc
 import lib.sql as sql
 from enum import Enum
@@ -15,9 +16,6 @@ from lib.common import Channel, CustomView, Guild, Live, ObjectEmbedView, Playli
 from typing import Dict, List, Tuple, Union
 from wavelink.ext import spotify
 
-with open('./config/settings.json',"r",encoding = 'utf-8') as f:
-    settings = json.load(f)
-
 URL_REGEX = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
 OPTIONS = {
     "1️⃣": 0,
@@ -27,12 +25,16 @@ OPTIONS = {
     "5️⃣": 4
 }
 
+MANAGE_USER_ID = int(os.getenv('MANAGE_USER_ID'))
+SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
+SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
+WL_HOST = os.getenv('WL_HOST')
+WL_PASSWORD = os.getenv('WL_PASSWORD')
+
 class Mode(Enum):
     NORMAL = "普通"
     PLAY = "播放"
     PLAYLIST = "清單" #添加進歌單的模式
-
-
 
 class HistorySong():
 
@@ -94,6 +96,7 @@ class HistorySongView(CustomView):
         if len(self.history_song) <= self.end:
             self.children[1].disabled = True
 
+#音樂控制面板
 class ControlView(CustomView):
     def __init__(self, player: wavelink.Player):
         super().__init__(timeout=None)
@@ -496,16 +499,17 @@ class ControlView(CustomView):
         miko.add_field(name = "🚩目前序位:", value = self.get_current_queue())
         return miko
 
+#歌單選擇視窗
 class SelectPlaylistView(CustomView):
 
     def __init__(self, playlists: dict):
         super().__init__(timeout=None)
-        self.playlists = playlists
-        self.position = 0
-        self.current_playlist:Tuple[str,Playlist] = None
-        self.temp_playlist:List[Union[YTSong,STSong]] = None
-        self.random:bool = False
-        self.specified:bool = False
+        self.playlists = playlists #所有歌單
+        self.position = 0 #當前播放清單位置
+        self.current_playlist:Tuple[str,Playlist] = None #當前播放清單
+        self.temp_playlist:List[Union[YTSong,STSong]] = None #暫存播放清單(因隨機跟指定都會跟原本的播放清單不同順序)
+        self.random:bool = False #隨機播放
+        self.specified:bool = False #指定位置播放
         self.add_base_button()
 
     class New_Playlist_Modal(Modal):
@@ -597,7 +601,7 @@ class SelectPlaylistView(CustomView):
         if (len(self.playlists)-1 == self.position) or (len(self.playlists) == 0):
             self.children[2].disabled = True
         if (len(self.playlists) == 0):
-            for i in range(4,8):
+            for i in range(4,10):
                 self.children[i].disabled = True
         if self.current_playlist is not None:
             if (len(self.current_playlist[1].song_list) == 0):
@@ -625,8 +629,10 @@ class SelectPlaylistView(CustomView):
             self.current_playlist = None
         else:
             self.current_playlist = (title, item) = playlist[self.position]
+            miko.set_thumbnail(url = item.creater.display_avatar.url)
             miko.set_author(name = f"第 {self.position + 1} 個播放清單(共 {len(self.playlists)} 個):")
             miko.add_field(name = "🎯名稱:", value = title, inline = False)
+            miko.add_field(name = "👑擁有者:", value = f"{item.creater.display_name}", inline = False)
             miko.add_field(name = "🎲歌曲數目:", value = f"共 {len(item.song_list)} 首", inline = False)
             if len(item.song_list) != 0:
                 songs = ""
@@ -639,27 +645,46 @@ class SelectPlaylistView(CustomView):
         return miko
 
     async def new(self, interaction: Interaction):
+        if interaction.user.id != MANAGE_USER_ID:
+            for playlist in self.playlists.values():
+                if playlist.creater.id == interaction.user.id:
+                    await interaction.response.send_message("您已經擁有一個歌單，無法再建立", ephemeral = True)
+                    return
         await interaction.response.send_modal(self.New_Playlist_Modal(self))
-
+    
+    # 刪除歌單
     async def delete(self, interaction: Interaction):
-        await interaction.response.send_modal(self.Double_Check_Delete_Playlist_Modal(self))
-
+        if interaction.user.id == MANAGE_USER_ID or interaction.user.id == self.current_playlist[1].creater.id:
+            await interaction.response.send_modal(self.Double_Check_Delete_Playlist_Modal(self))
+        else:
+            await interaction.response.send_message("您不是此歌單的擁有者或管理員，無法刪除", ephemeral = True)
+            return
+    
+    # 更換歌單名稱
     async def update(self, interaction: Interaction):
-        await interaction.response.send_modal(self.Update_Playlist_title_Modal(self))
+        if interaction.user.id == MANAGE_USER_ID or interaction.user.id == self.current_playlist[1].creater.id:
+            await interaction.response.send_modal(self.Update_Playlist_title_Modal(self))
+        else:
+            await interaction.response.send_message("您不是此歌單的擁有者或管理員，無法更換名稱", ephemeral = True)
+            return
 
+    # 編輯歌單
     async def edit(self, interaction: Interaction):
         edit_view = PlayerlistEditView(self)
         await interaction.response.edit_message(view = edit_view, embed = await edit_view.get_current_playlist_song_embed())
 
+    # 指定位置播放
     async def specified_play(self,interaction:Interaction):
         await interaction.response.send_modal(self.Set_Position_To_Play_Modal(self))
 
+    # 隨機播放
     async def random_play(self,interaction:Interaction):
         self.temp_playlist = self.current_playlist[1].song_list.copy()
         random.shuffle(self.temp_playlist)
         self.random = True
         await self.play(interaction)        
 
+    # 播放
     async def play(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
         players: dict = interaction.client.get_cog("Music").players
@@ -693,7 +718,7 @@ class SelectPlaylistView(CustomView):
             for item in control_panel.history_song[1:len(control_panel.history_song)]:
                 await player.queue.put_wait(item.song.track)
             await interaction.followup.edit_message(interaction.message.id, content = f'已點播歌單 `{self.current_playlist[0]}` 現正準備播放中......')
-            control_panel.message: WebhookMessage = await interaction.followup.send(content = None, embed = control_panel.create_embed(), view = control_panel, ephemeral = False)
+            control_panel.message = await interaction.followup.send(content = None, embed = control_panel.create_embed(), view = control_panel, ephemeral = False)
             control_panel.message_id = control_panel.message.id
             control_panel.refresh_webhook.start()
             control_panel.refresh_panel.start()
@@ -703,15 +728,18 @@ class SelectPlaylistView(CustomView):
             await interaction.followup.edit_message(interaction.message.id, content = f'已插入歌單 `{self.current_playlist[0]}` 至隊列中 共{len(song_list)}首')
             await control_panel.message.edit(content = f"<@{interaction.user.id}> 已插入歌單 `{self.current_playlist[0]}` 至隊列中  共{len(song_list)}首", embed = control_panel.create_embed(), view = control_panel)
 
+    # 關閉視窗
     async def cancel(self, interaction: Interaction):
         await interaction.response.edit_message(content="已關閉", embed = None, view = None)
 
+    # 切換至上/下一項
     async def next(self, interaction: Interaction):
         await interaction.response.defer(ephemeral=True)
         self.position += int(interaction.data.get('custom_id'))
         self.ui_control()
         await interaction.followup.edit_message(interaction.message.id, content = None, view = self, embed = await self.get_current_playlist_embed())
 
+#歌單編輯視窗
 class PlayerlistEditView(CustomView):
 
     def __init__(self, view: SelectPlaylistView):
@@ -769,7 +797,7 @@ class PlayerlistEditView(CustomView):
                             self.view.playlist.append((song, interaction.user))
                         else:
                             self.view.playlist.insert(int(self.position.value) - 1, (song, interaction.user))
-                        await sql.insert_playlist_song(self.view.title, int(self.position.value), self.query.value, interaction.user.id)
+                        sql.insert_playlist_song(self.view.title, int(self.position.value), self.query.value, interaction.user.id)
                         await interaction.followup.edit_message(interaction.message.id, content = f"插入成功，已插入位置:{self.position.value}", view = self.view, embed = await self.view.get_current_playlist_song_embed())
                     else:
                         search = await wavelink.YouTubeTrack.search(query = self.query.value)
@@ -860,25 +888,43 @@ class PlayerlistEditView(CustomView):
         if len(self.playlist) <= 1:
             self.children[5].disabled = True
 
+    # 新增歌曲
     async def new(self, interaction: Interaction):
-        await interaction.response.send_modal(self.New_Song_Modal(self))
+        if interaction.user.id == MANAGE_USER_ID or interaction.user.id == self.current_playlist[1].creater.id:
+            await interaction.response.send_modal(self.New_Song_Modal(self))
+        else:
+            await interaction.response.send_message("您不是此歌單的擁有者或管理員，無法新增歌曲", ephemeral = True)
+            return
 
+    # 刪除歌曲
     async def delete(self, interaction: Interaction):
-        await interaction.response.send_modal(self.Delete_Song_Modal(self))
+        if interaction.user.id == MANAGE_USER_ID or interaction.user.id == self.current_playlist[1].creater.id:
+            await interaction.response.send_modal(self.Delete_Song_Modal(self))
+        else:
+            await interaction.response.send_message("您不是此歌單的擁有者或管理員，無法刪除歌曲", ephemeral = True)
+            return
 
+    # 交換歌曲位置
     async def edit(self, interaction: Interaction):
-        await interaction.response.send_modal(self.Swap_Song_Modal(self))
+        if interaction.user.id == MANAGE_USER_ID or interaction.user.id == self.current_playlist[1].creater.id:
+            await interaction.response.send_modal(self.Swap_Song_Modal(self))
+        else:
+            await interaction.response.send_message("您不是此歌單的擁有者或管理員，無法交換歌曲位置", ephemeral = True)
+            return
 
+    # 關閉視窗
     async def cancel(self, interaction: Interaction):
         self.last_view.add_base_button()
         await interaction.response.edit_message(content = None, view = self.last_view, embed = await self.last_view.get_current_playlist_embed())
 
+    # 切換至上/下十首
     async def next(self, interaction: Interaction):
         await interaction.response.defer(ephemeral = True)
         self.start += int(interaction.data.get('custom_id'))
         self.end += int(interaction.data.get('custom_id'))
         await interaction.followup.edit_message(interaction.message.id, content = None, view = self, embed = await self.get_current_playlist_song_embed())
 
+#歌曲選擇視窗
 class SelectSongView(CustomView):
     def __init__(self, tracks:List[wavelink.YouTubeTrack], mode: Mode = Mode.PLAY, player: wavelink.Player = None, control_panel: ControlView = None, edit_view: PlayerlistEditView = None, position: int = None):
         super().__init__(timeout = None)
@@ -925,7 +971,7 @@ class SelectSongView(CustomView):
             if self.player.queue.is_empty and not self.player.is_playing() and len(self.control_panel.history_song) == 1:
                 await self.player.play(song.track)
                 await interaction.followup.edit_message(interaction.message.id, content = f'已新增歌曲 `{song.title}` 現正準備播放中....', embed = None, view = None)
-                self.control_panel.message: WebhookMessage = await interaction.followup.send(embed = self.control_panel.create_embed(), view = self.control_panel)
+                self.control_panel.message = await interaction.followup.send(embed = self.control_panel.create_embed(), view = self.control_panel)
                 self.control_panel.message_id = self.control_panel.message.id
                 self.control_panel.refresh_webhook.start()
                 self.control_panel.refresh_panel.start()
@@ -980,7 +1026,7 @@ class Music(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.node : wavelink.Node = wavelink.Node(uri='http://localhost:2333', password='youshallnotpass')
+        self.node : wavelink.Node = wavelink.Node(uri=WL_HOST, password=WL_PASSWORD)
         self.players:Dict[int,wavelink.Player] = {}
         self.control_panels:Dict[int,ControlView] = {}
         self.subscribe_channel_list = {}  # 訂閱頻道暫存
@@ -997,6 +1043,9 @@ class Music(commands.Cog):
         await interaction.response.defer(ephemeral = True)
         message = await interaction.followup.send(f"搜尋中...", ephemeral = True)
         notice = await nc.create_channel(get_platform_info_by_string(platform), channel_url)
+        if notice == None:
+            await message.edit(content=f"無法新增此頻道直播/新片通知，請稍後再試")
+            return
         g = Guild(interaction.guild_id, interaction.channel.id,interaction.user.voice.channel.id)
         channels: list = self.get_subscribe_channel(interaction.guild_id)
         if self.notification_channels.__contains__(notice.id):
@@ -1100,8 +1149,8 @@ class Music(commands.Cog):
     async def create_nodes(self):
         await self.bot.wait_until_ready()
         sc = spotify.SpotifyClient(
-            client_id = settings['spotify']['client_id'],
-            client_secret = settings['spotify']['client_secret']
+            client_id = SPOTIFY_CLIENT_ID,
+            client_secret = SPOTIFY_CLIENT_SECRET
         )
         await wavelink.NodePool.connect(client=self.bot, nodes=[self.node] ,spotify = sc)
 
@@ -1109,8 +1158,10 @@ class Music(commands.Cog):
     async def on_wavelink_node_ready(self, node: wavelink.Node):
         print(f"Node {node.id} is ready!")
         print("正在讀取歌單中......")
+        start_time = time.time()
         self.playlists, self.notification_channels = await nc.init(self.bot)
-        print("歌單讀取完成")
+        end_time = time.time()
+        print(f"歌單讀取完成，共花費{end_time-start_time}秒")
         nc.checkforvideos.start(self.bot,self.notification_channels,self.players,self.control_panels,self.watch_list)
 
     @commands.Cog.listener()
@@ -1212,7 +1263,7 @@ class Music(commands.Cog):
                     await interaction.followup.edit_message(message.id, content=f'已新增歌曲 `{song.title}` 現正準備播放中......')
                     control_panel.history_thumbnails.append(song.thumbnail)
                     control_panel.history_song.append(HistorySong(song, interaction.user))
-                    control_panel.message: WebhookMessage = await interaction.followup.send(embed = control_panel.create_embed(), view = control_panel, ephemeral = False)
+                    control_panel.message = await interaction.followup.send(embed = control_panel.create_embed(), view = control_panel, ephemeral = False)
                     control_panel.message_id = control_panel.message.id
                     control_panel.refresh_webhook.start()
                     control_panel.refresh_panel.start()
@@ -1240,7 +1291,7 @@ class Music(commands.Cog):
             if player.queue.is_empty and not player.is_playing() and len(control_panel.history_song) == len(song_list):
                 await check_play(song_list)
                 await interaction.followup.edit_message(message.id, content = f'已新增歌單/專輯 現正準備播放中......')
-                control_panel.message: WebhookMessage = await interaction.followup.send(embed = control_panel.create_embed(), view = control_panel, ephemeral = False)
+                control_panel.message = await interaction.followup.send(embed = control_panel.create_embed(), view = control_panel, ephemeral = False)
                 control_panel.message_id = control_panel.message.id
                 control_panel.refresh_webhook.start()
                 control_panel.refresh_panel.start()

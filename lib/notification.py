@@ -1,7 +1,8 @@
 import asyncio
-import requests
 import datetime
 import json
+import os
+import requests
 import re
 import wavelink
 import commands.music as Music
@@ -13,8 +14,8 @@ from typing import Dict, List, Tuple, Union
 from discord.ui import Button
 from lib.common import Channel, CustomView, Guild, Live, Playlist, YTSong , Platform
 
-with open('./config/settings.json', "r", encoding='utf-8') as f:
-    settings = json.load(f)
+NOTIFICATION_REFRESH_LIVE_INTERVAL = int(os.getenv('NOTIFICATION_REFRESH_LIVE_INTERVAL'))
+NOTIFICATION_INTERVAL = int(os.getenv('NOTIFICATION_INTERVAL'))
 
 class CheckView(CustomView):
 
@@ -60,7 +61,7 @@ class CheckView(CustomView):
     async def before_time_to_start(self):
         await asyncio.sleep(float(self.live.start_time - int(datetime.datetime.now().timestamp())))
 
-    @tasks.loop(seconds = settings['notification']['refresh_live_interval'])
+    @tasks.loop(seconds = NOTIFICATION_REFRESH_LIVE_INTERVAL)
     async def join(self):
         try:
             song = YTSong(self.live.url)
@@ -117,7 +118,7 @@ class CheckView(CustomView):
                     control_panels[key].channel = self.bot.get_channel(value['obj'].text_id)
                     control_panels[key].history_song.append(self.live)
                     control_panels[key].history_thumbnails.append(self.live.thumbnail)
-                    control_panels[key].message: WebhookMessage = await control_panels[key].channel.send(embed=control_panels[key].create_embed(), view=control_panels[key])
+                    control_panels[key].message = await control_panels[key].channel.send(embed=control_panels[key].create_embed(), view=control_panels[key])
                     control_panels[key].message_id = control_panels[key].message.id
                     if not control_panels[key].refresh_webhook.is_running():
                         control_panels[key].refresh_webhook.start()
@@ -146,7 +147,7 @@ class CheckView(CustomView):
                 control_panels[key].channel = self.bot.get_channel(self.channels[interaction.guild_id]['obj'].text_id)
                 control_panels[key].history_song.append(self.live)
                 control_panels[key].history_thumbnails.append(self.live.thumbnail)
-                control_panels[key].message: WebhookMessage = await control_panels[key].channel.send(embed=control_panels[key].create_embed(), view=control_panels[key])
+                control_panels[key].message = await control_panels[key].channel.send(embed=control_panels[key].create_embed(), view=control_panels[key])
                 control_panels[key].message_id = control_panels[key].message.id
                 if not control_panels[key].refresh_webhook.is_running():
                         control_panels[key].refresh_webhook.start()
@@ -173,7 +174,7 @@ class CheckView(CustomView):
 
 class Video():
 
-    def __init__(self, title: str, url: str, thumbnail: str, date: datetime.datetime, type: str):
+    def __init__(self, title: str, url: str, thumbnail: str, date: Union[datetime.datetime,None], type: str):
         self.title = title
         self.thumbnail = thumbnail
         self.url = url
@@ -187,9 +188,11 @@ class Video():
         print("- 縮圖:", self.thumbnail)
         print("===========================================")
 
-async def get_video_datetime(video_id) -> datetime.datetime:
-    videos_html = requests.get(
-        f"https://www.youtube.com/watch?v={video_id}").text
+async def get_video_datetime(video_id) -> Union[datetime.datetime,None]:
+    try:
+        videos_html = requests.get(f"https://www.youtube.com/watch?v={video_id}").text
+    except requests.exceptions.Timeout:
+        return None
     soup = BeautifulSoup(videos_html, "html.parser")
     data = re.search(
         r"var ytInitialData = ({.*});", str(soup)).group(1)
@@ -213,10 +216,12 @@ async def get_video_datetime(video_id) -> datetime.datetime:
 
 #取得最新影片(影片)
 async def get_latest_video_from_videos(url) -> Union[Video,None]:
-    videos_html = requests.get(f"{url}/videos").text
+    try:
+        videos_html = requests.get(f"{url}/videos",timeout = 5).text
+    except requests.exceptions.Timeout:
+        return None
     soup = BeautifulSoup(videos_html, "html.parser")
-    data = re.search(
-        r"var ytInitialData = ({.*});", str(soup)).group(1)
+    data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
     try:
         data = json.loads(data)
     except json.JSONDecodeError:
@@ -243,7 +248,10 @@ async def get_latest_video_from_videos(url) -> Union[Video,None]:
 
 #取得最新影片(直播)
 async def get_latest_video_from_streams(url) -> Union[Video,None]:
-    videos_html = requests.get(f"{url}/streams").text
+    try:
+        videos_html = requests.get(f"{url}/streams",timeout = 5).text
+    except requests.exceptions.Timeout:
+        return None
     soup = BeautifulSoup(videos_html, "html.parser")
     data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
     try:
@@ -278,10 +286,12 @@ async def get_latest_video_from_streams(url) -> Union[Video,None]:
 
 #取得最新影片(short)
 async def get_latest_video_from_Shorts(url) -> Union[Video,None]:
-    videos_html = requests.get(f"{url}/shorts").text
+    try:
+        videos_html = requests.get(f"{url}/shorts",timeout = 5).text
+    except requests.exceptions.Timeout:
+        return None
     soup = BeautifulSoup(videos_html, "html.parser")
-    data = re.search(
-        r"var ytInitialData = ({.*});", str(soup)).group(1)
+    data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
     try:
         data = json.loads(data)
     except json.JSONDecodeError:
@@ -307,16 +317,18 @@ async def get_latest_video_from_Shorts(url) -> Union[Video,None]:
 
 #取得最新影片(總)
 async def get_latest_video(channel_url: str) -> Union[Video,None]:
-    videos_html = requests.get(channel_url).text
+    try:
+        videos_html = requests.get(channel_url,timeout = 5).text
+    except requests.exceptions.Timeout:
+        return None
     soup = BeautifulSoup(videos_html, "html.parser")
-    data = re.search(
-        r"var ytInitialData = ({.*});", str(soup)).group(1)
+    data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
     try:
         data = json.loads(data)
     except json.JSONDecodeError:
         data = re.search(r"(.*);</script>", data).group(1)
         data = json.loads(data)
-    videos = []
+    videos:List[Video] = []
     try:
         for tab_item in data['contents']['twoColumnBrowseResultsRenderer']['tabs']:
             if tab_item['tabRenderer']['title'] == "首頁":
@@ -358,29 +370,36 @@ async def get_latest_video(channel_url: str) -> Union[Video,None]:
 
                 latest_video: Video = videos[0]
                 for video in videos[1:]:
-                    if latest_video.date < video.date:
-                        latest_video = video
-                else:
-                    print("---------------最新影片/直播---------------")
-                    latest_video.toString()
-                    return latest_video
+                    if latest_video.date != None:
+                        if video.date != None:
+                            if latest_video.date < video.date:
+                                latest_video = video
+                        else:
+                            continue
+                    else:
+                        break
+                print("---------------最新影片/直播---------------")
+                latest_video.toString()
+                return latest_video
     except KeyError:
         print("----------新影片資訊取得失敗----------")
         return None
 
 
-async def create_channel(platform: Platform, URL: str) -> Channel:
+async def create_channel(platform: Platform, URL: str) -> Union[Channel,None]:
     if platform == Platform.YOUTUBE:
-        soup = BeautifulSoup(requests.get(URL).content, "html.parser")
-        data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
+        try:
+            soup = BeautifulSoup(requests.get(URL,timeout = 5).content, "html.parser")
+            data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
+        except requests.exceptions.Timeout:
+            return None
         try:
             json_data = json.loads(data)
             channel_id = json_data['header']['c4TabbedHeaderRenderer']['channelId']
             channel_title = json_data['header']['c4TabbedHeaderRenderer']['title']
             channel_thumbnail = json_data['header']['c4TabbedHeaderRenderer']['avatar']['thumbnails'][2]['url']
         except json.JSONDecodeError:
-            json_data = re.search(
-                r"\"header\":(.*),\"metadata\"", data).group(1)
+            json_data = re.search(r"\"header\":(.*),\"metadata\"", data).group(1)
             json_data = json.loads(json_data)
             channel_id = json_data['c4TabbedHeaderRenderer']['channelId']
             channel_title = json_data['c4TabbedHeaderRenderer']['title']
@@ -396,7 +415,7 @@ async def init(bot: commands.Bot) -> Tuple[Dict[str,Playlist],Dict[str,Dict[Chan
     return await sql.get_playlists(bot), await sql.get_channels()
 
 
-@tasks.loop(seconds=settings['notification']['interval'])
+@tasks.loop(seconds=NOTIFICATION_INTERVAL)
 async def checkforvideos(bot: commands.Bot, notification_channels: dict, players: dict, control_panels: dict, watch_list: dict):
 
     def create_new_video_embed(channel: Channel, video: Video):
@@ -412,8 +431,12 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
     print(f"------------------現在時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp()))}------------------")
     for channel_id, value in notification_channels.items():
         channel_url = f"https://www.youtube.com/channel/{channel_id}"
-        index_html = requests.get(channel_url).text
         live_channel: Channel = value['obj']
+        try:
+            index_html = requests.get(channel_url,timeout =5).text
+        except requests.exceptions.Timeout:
+            print(f"頻道 {live_channel.title} 請求頁面超時")
+            continue
         subscribe_guilds:dict[int,Guild] = value['channels']
         print("頻道:", live_channel.title)
         if re.search('(?<="startTime":").*?(?=")', index_html) is not None:
@@ -495,11 +518,6 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
                         for id,guild in subscribe_guilds.items():
                             channel = await bot.fetch_channel(guild['obj'].text_id)
                             watch_list[video.title].message = await channel.send(embed=video.create_embed(), view=watch_list[video.title])
-        
-
-
-
-
 
         #新影片上架
         video: Video = await get_latest_video(channel_url)
@@ -513,4 +531,4 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
                 sql.update_latest_video(live_channel.title, video.url)
                 print("新片上架")
         print("==========================下一個頻道==========================")
-    print(f"----------------下次執行時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp())) + datetime.timedelta(seconds = settings['notification']['interval'])}----------------")
+    print(f"----------------下次執行時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp())) + datetime.timedelta(seconds = NOTIFICATION_INTERVAL)}----------------")
