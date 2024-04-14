@@ -12,10 +12,11 @@ from discord import ButtonStyle, Colour, Embed, Interaction, WebhookMessage
 from discord.ext import commands,tasks 
 from typing import Dict, List, Tuple, Union
 from discord.ui import Button
-from lib.common import Channel, CustomView, Guild, Live, Playlist, YTSong , Platform
+from lib.common import Channel, CustomView, Guild, Live, Playlist, Song , Platform
 
 NOTIFICATION_REFRESH_LIVE_INTERVAL = int(os.getenv('NOTIFICATION_REFRESH_LIVE_INTERVAL'))
 NOTIFICATION_INTERVAL = int(os.getenv('NOTIFICATION_INTERVAL'))
+MANAGE_CHANNEL_ID = int(os.getenv('MANAGE_CHANNEL_ID'))
 
 class CheckView(CustomView):
 
@@ -64,10 +65,10 @@ class CheckView(CustomView):
     @tasks.loop(seconds = NOTIFICATION_REFRESH_LIVE_INTERVAL)
     async def join(self):
         try:
-            song = YTSong(self.live.url)
+            song = Song(self.live.url)
             result = await song.init()
             if isinstance(result,tuple):
-                self.live.reconnection_times += 1
+                song.setExtras({"reconnection_times":self.live.reconnection_times + 1})
                 print(f"        嘗試取得{self.live.title}串流{self.live.reconnection_times}次")
                 return
             else: # 取的直播串流後執行
@@ -113,7 +114,7 @@ class CheckView(CustomView):
             if key not in players:
                 players[key] = await self.bot.get_channel(value['obj'].voice_id).connect(cls = wavelink.Player)
                 await asyncio.sleep(1)
-                if players[key].is_connected():
+                if players[key].connected:
                     control_panels[key] = Music.ControlView(players.get(key))
                     control_panels[key].channel = self.bot.get_channel(value['obj'].text_id)
                     control_panels[key].history_song.append(self.live)
@@ -141,8 +142,9 @@ class CheckView(CustomView):
         control_panels = self.control_panels
         key = interaction.guild_id
         if key not in players:
+            # 如果沒有在頻道中則執行
             players[key] = await self.bot.get_channel(self.channels[interaction.guild_id]['obj'].voice_id).connect(cls=wavelink.Player)
-            if players[key].is_connected():
+            if players[key].connected:
                 control_panels[key] = Music.ControlView(players.get(key))
                 control_panels[key].channel = self.bot.get_channel(self.channels[interaction.guild_id]['obj'].text_id)
                 control_panels[key].history_song.append(self.live)
@@ -226,8 +228,10 @@ async def get_latest_video_from_videos(url) -> Union[Video,None]:
         data = json.loads(data)
     except json.JSONDecodeError:
         data = re.search(r"(.*);</script>", data).group(1)
-        data = json.loads(data)
-
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return None
     try:
         for tab_item in data['contents']['twoColumnBrowseResultsRenderer']['tabs']:
             if tab_item['tabRenderer']['title'] == "影片":
@@ -258,7 +262,10 @@ async def get_latest_video_from_streams(url) -> Union[Video,None]:
         data = json.loads(data)
     except json.JSONDecodeError:
         data = re.search(r"(.*);</script>", data).group(1)
-        data = json.loads(data)
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return None
     title = ""
     thumbnail = ""
     video_id = ""
@@ -296,7 +303,10 @@ async def get_latest_video_from_Shorts(url) -> Union[Video,None]:
         data = json.loads(data)
     except json.JSONDecodeError:
         data = re.search(r"(.*);</script>", data).group(1)
-        data = json.loads(data)
+        try:
+            data = json.loads(data)
+        except json.JSONDecodeError:
+            return None
     video_id = ""
     thumbnail = ""
     title = ""
@@ -428,6 +438,7 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
         miko.add_field(name="🔗網址:", value=channel.latest_video, inline=False)
         miko.set_image(url=video.thumbnail)
         return miko
+    
     print(f"------------------現在時間:{datetime.datetime.fromtimestamp(int(datetime.datetime.now().timestamp()))}------------------")
     for channel_id, value in notification_channels.items():
         channel_url = f"https://www.youtube.com/channel/{channel_id}"
@@ -442,7 +453,7 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
         if re.search('(?<="startTime":").*?(?=")', index_html) is not None:
             soup = BeautifulSoup(index_html, "html.parser")
             data = re.search(r"var ytInitialData = ({.*});", str(soup)).group(1)
-            videos: List[Live] = []
+            lives: List[Live] = []
             try:
                 data = json.loads(data)
             except json.JSONDecodeError:
@@ -497,12 +508,12 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
                         break
             except KeyError:
                 print("----------直播資訊取得失敗----------")
-            for video in videos:  # 待修復:同一時間點的直播 會造成前一占據的會被忽視
-                video.toString()
+            for live in lives:  # 待修復:同一時間點的直播 會造成前一占據的會被忽視
+                live.toString()
                 # 小於一天內開播
-                if video.start_time <= int((datetime.datetime.now() + datetime.timedelta(days=1)).timestamp()):
-                    if watch_list.__contains__(video.title):  # 舊的直播
-                        waiting_channels = watch_list[video.title].channels
+                if live.start_time <= int((datetime.datetime.now() + datetime.timedelta(days=1)).timestamp()):
+                    if watch_list.__contains__(live.title):  # 舊的直播
+                        waiting_channels = watch_list[live.title].channels
                         print("waiting_channels_before:", waiting_channels)
                         for id, guild in subscribe_guilds.items():
                             # 新的頻道訂閱群
@@ -511,13 +522,13 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
                                     "obj": guild
                                 }
                                 channel = await bot.fetch_channel(guild['obj'].text_id)
-                                watch_list[video.title].message = await channel.send(embed=video.create_embed(), view=watch_list[video.title])
+                                watch_list[live.title].message = await channel.send(embed=live.create_embed(), view=watch_list[live.title])
                         print("waiting_channels_after:", waiting_channels)
                     else:  # 新的直播加入
-                        watch_list[video.title] = CheckView(video, subscribe_guilds, bot, watch_list, players, control_panels)
+                        watch_list[live.title] = CheckView(live, subscribe_guilds, bot, watch_list, players, control_panels)
                         for id,guild in subscribe_guilds.items():
                             channel = await bot.fetch_channel(guild['obj'].text_id)
-                            watch_list[video.title].message = await channel.send(embed=video.create_embed(), view=watch_list[video.title])
+                            watch_list[live.title].message = await channel.send(embed=live.create_embed(), view=watch_list[live.title])
 
         #新影片上架
         video: Video = await get_latest_video(channel_url)
@@ -525,9 +536,26 @@ async def checkforvideos(bot: commands.Bot, notification_channels: dict, players
             if live_channel.latest_video != video.url:
                 print("原影片url:", live_channel.latest_video)
                 live_channel.latest_video = video.url
-                for (id, guild) in value['channels'].items():
-                    channel = await bot.fetch_channel(guild['obj'].text_id)
-                    await channel.send(embed=create_new_video_embed(live_channel, video))
+                for (id, item) in value['channels'].items():
+                    try:
+                        channel = await bot.fetch_channel(item['obj'].text_id)
+                        await channel.send(embed=create_new_video_embed(live_channel, video))
+                    except Exception:
+                        print("新影片通知失敗")
+                        try:
+                            channel = await bot.fetch_channel(MANAGE_CHANNEL_ID)
+                            guild = bot.get_guild(item['obj'].guild_id)
+                            miko = Embed(colour=Colour.random())
+                            miko.set_author(name="⚠️錯誤:")
+                            miko.set_thumbnail(url=live_channel.thumbnail)
+                            miko.add_field(name=f"{Platform.YOUTUBE.value}頻道:",value=live_channel.title)
+                            miko.add_field(name="🔔伺服器:", value=guild.name)
+                            miko.add_field(name="🔥狀態:",value="無法通知新影片",inline=False)
+                            miko.add_field(name="🔗網址:", value=live_channel.latest_video, inline=False)
+                            miko.set_image(url=video.thumbnail)
+                            await channel.send(embed=miko)
+                        except Exception as e:
+                            print("無效的管理頻道") 
                 sql.update_latest_video(live_channel.title, video.url)
                 print("新片上架")
         print("==========================下一個頻道==========================")
