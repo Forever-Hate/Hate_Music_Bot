@@ -119,48 +119,48 @@ class Guild():
         miko.add_field(name = "👀人數:", value = f"{guild.member_count}人", inline = False)
         return miko
 
-class Live():
+# class Live():
 
-    def __init__(self, title: str, channel_title: str, url: str, start_time: int, thumbnail: str, platform: Platform):
-        self.title = title
-        self.channel_title = channel_title
-        self.url = url
-        self.start_time = start_time
-        self.thumbnail = thumbnail
-        self.platform = platform
-        self.reconnection_times = 0
+#     def __init__(self, title: str, channel_title: str, url: str, start_time: int, thumbnail: str, platform: Platform):
+#         self.title = title
+#         self.channel_title = channel_title
+#         self.url = url
+#         self.start_time = start_time
+#         self.thumbnail = thumbnail
+#         self.platform = platform
+#         self.reconnection_times = 0
 
-    def toString(self):
-        print("===============新直播排程===============")
-        print("- 標題:", self.title)
-        print("- 頻道名稱:", self.channel_title)
-        print("- url:", self.url)
-        print("- 開始時間:", datetime.datetime.fromtimestamp(self.start_time).strftime('%Y年%m月%d日 %H點%M分%S秒'))
-        print("- 距離開始還有:", self.start_time -int(datetime.datetime.now().timestamp()),"秒")
-        print("- 縮圖:", self.thumbnail)
-        print("========================================")
+#     def toString(self):
+#         print("===============新直播排程===============")
+#         print("- 標題:", self.title)
+#         print("- 頻道名稱:", self.channel_title)
+#         print("- url:", self.url)
+#         print("- 開始時間:", datetime.datetime.fromtimestamp(self.start_time).strftime('%Y年%m月%d日 %H點%M分%S秒'))
+#         print("- 距離開始還有:", self.start_time -int(datetime.datetime.now().timestamp()),"秒")
+#         print("- 縮圖:", self.thumbnail)
+#         print("========================================")
 
-    def toEmbed(self, index: int = 0) -> Embed:
-        miko = Embed(colour = Colour.random())
-        miko.set_thumbnail(url = self.thumbnail)
-        miko.set_author(name = f"第 {index+1} 個直播排程:")
-        miko.add_field(name = "🎯標題:", value = self.title, inline = False)
-        miko.add_field(name = "👑頻道名稱:", value = self.channel_title, inline = False)
-        miko.add_field(name = "🔗url:", value = self.url, inline = False)
-        miko.add_field(name = "⏰開始時間:", value = datetime.datetime.fromtimestamp(self.start_time).strftime('%Y年%m月%d日 %H點%M分%S秒'), inline = False)
-        miko.add_field(name = "⌛距離開始還有:", value = f"{self.start_time - int(datetime.datetime.now().timestamp())}秒", inline = False)
-        return miko
+#     def toEmbed(self, index: int = 0) -> Embed:
+#         miko = Embed(colour = Colour.random())
+#         miko.set_thumbnail(url = self.thumbnail)
+#         miko.set_author(name = f"第 {index+1} 個直播排程:")
+#         miko.add_field(name = "🎯標題:", value = self.title, inline = False)
+#         miko.add_field(name = "👑頻道名稱:", value = self.channel_title, inline = False)
+#         miko.add_field(name = "🔗url:", value = self.url, inline = False)
+#         miko.add_field(name = "⏰開始時間:", value = datetime.datetime.fromtimestamp(self.start_time).strftime('%Y年%m月%d日 %H點%M分%S秒'), inline = False)
+#         miko.add_field(name = "⌛距離開始還有:", value = f"{self.start_time - int(datetime.datetime.now().timestamp())}秒", inline = False)
+#         return miko
 
-    def create_embed(self) -> Embed:
-        miko = Embed(colour = Colour.random())
-        miko.set_author(name = "🎧即將到來的直播:")
-        miko.set_thumbnail(url = self.thumbnail)
-        miko.add_field(name = f"{Platform.YOUTUBE.value}頻道:",value = self.channel_title)
-        miko.add_field(name = "🎯名稱:", value = self.title)
-        miko.add_field(name = "🔗網址:", value = self.url, inline = False)
-        miko.add_field(name = "⏰直播時間:", value = f"<t:{self.start_time}:f>")
-        miko.add_field(name = "⌛距離開始直播:",value = f"<t:{self.start_time}:R>", inline = False)
-        return miko
+#     def create_embed(self) -> Embed:
+#         miko = Embed(colour = Colour.random())
+#         miko.set_author(name = "🎧即將到來的直播:")
+#         miko.set_thumbnail(url = self.thumbnail)
+#         miko.add_field(name = f"{Platform.YOUTUBE.value}頻道:",value = self.channel_title)
+#         miko.add_field(name = "🎯名稱:", value = self.title)
+#         miko.add_field(name = "🔗網址:", value = self.url, inline = False)
+#         miko.add_field(name = "⏰直播時間:", value = f"<t:{self.start_time}:f>")
+#         miko.add_field(name = "⌛距離開始直播:",value = f"<t:{self.start_time}:R>", inline = False)
+#         return miko
 
 class Song:
 
@@ -214,6 +214,7 @@ class Song:
     
 class Playlist():
 
-    def __init__(self, song_list: List[Song], creater: User):
+    def __init__(self, song_list: List[Song], creater: User,play_count: int):
         self.song_list = song_list
         self.creater = creater
+        self.play_count = play_count

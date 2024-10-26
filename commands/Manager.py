@@ -14,33 +14,30 @@ class Manager(commands.GroupCog, name = 'admin', description = '管理指令'):
     async def search(self, interaction: Interaction, module: str, obj: str):
         await interaction.response.defer(ephemeral=True)
         embed_list = []
+
+        cog = self.bot.get_cog(module).__dict__[obj]
+
         if obj == "notification_channels":
-            notification = interaction.client.get_cog(module).__dict__[obj]
-            for (index, value) in enumerate(notification.values()):
+            for index, value in enumerate(cog.values()):
                 embed_list.append(value['obj'].toEmbed(index))
-                for (number, guild) in enumerate(value['channels'].values()):
-                    embed_list.append(guild['obj'].toEmbed(
-                        self.bot, index, number))
+                for number, guild in enumerate(value['channels'].values()):
+                    embed_list.append(guild['obj'].toEmbed(self.bot, index, number))
         elif obj == "control_panels":
-            control_panels = interaction.client.get_cog(module).__dict__[obj]
-            for (index, (id, value)) in enumerate(control_panels.items()):
+            for index, (id, value) in enumerate(cog.items()):
                 embed_list.append(value.toEmbed(self.bot, id, index))
         elif obj == "watch_list":
-            watch_list = interaction.client.get_cog(module).__dict__[obj]
-            for (index, (title, value)) in enumerate(watch_list.items()):
+            for index, (title, value) in enumerate(cog.items()):
                 embed_list.append(value.toEmbed(index))
 
-        if len(embed_list) != 0:
-            await interaction.followup.send(embeds=embed_list[0:10], view=ObjectEmbedView(embed_list))
+        if embed_list:
+            await interaction.followup.send(embeds=embed_list[:10], view=ObjectEmbedView(embed_list))
         else:
             await interaction.followup.send("None")
 
     @search.autocomplete('module')
     async def search_module_autocomplete_callback(self, interaction: Interaction, current: str):
         module_list = []
-        for filename in os.listdir('./commands'):
-            if filename.endswith('.py'):
-                module_list.append(app_commands.Choice(name = f'{filename[:-3]}', value = f'{filename[:-3].capitalize()}'))
+        module_list.append(app_commands.Choice(name = f'Music', value = f'Music'))
         return module_list
 
     @search.autocomplete('obj')

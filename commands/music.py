@@ -12,7 +12,7 @@ from enum import Enum
 from discord import Object, app_commands, ButtonStyle, Colour, Embed, Interaction , TextStyle , User, WebhookMessage
 from discord.ext import commands, tasks
 from discord.ui import Button, Modal, TextInput
-from lib.common import Channel, CustomView, Guild, Live, ObjectEmbedView, Playlist, Song,Platform,get_string_by_platform,get_platform_info_by_string
+from lib.common import Channel, CustomView, Guild, ObjectEmbedView, Playlist, Song,Platform,get_string_by_platform,get_platform_info_by_string
 from typing import Dict, List, Tuple, Union
 
 URL_REGEX = r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*(),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+"
@@ -29,6 +29,7 @@ SPOTIFY_CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 SPOTIFY_CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
 WL_HOST = os.getenv('WL_HOST')
 WL_PASSWORD = os.getenv('WL_PASSWORD')
+DEFAULT_VOLUME = int(os.getenv('DEFAULT_VOLUME'))
 
 class Mode(Enum):
     NORMAL = "普通"
@@ -122,8 +123,8 @@ class ControlView(CustomView):
     class PlayType(Enum):
         PLAYING = "播放中"
         PAUSING = "暫停中"
-        LIVEWAITING = "等待直播開始中"
         LIVE = "直播中"
+
 
     class VolumeModal(Modal):
         def __init__(self, control_panel):
@@ -264,43 +265,15 @@ class ControlView(CustomView):
         else:
             await interaction.followup.send(content = "等待下一句歌詞中...請稍後再試",ephemeral = True)
 
-    def create_current_live_waiting_embed(self) -> Embed:
-        miko = Embed(colour = Colour.random())
-        miko.set_author(name = "🎧現正等待中...")
-        miko.set_thumbnail(url = self.history_thumbnails[self.position-1])
-        miko.add_field(name = "🎯名稱:", value = self.history_song[self.position-1].title)
-        miko.add_field(name = "🔗網址:", value = self.history_song[self.position-1].url)
-        if self.history_song[self.position-1].reconnection_times == 0:
-            miko.add_field(name = "⌛距離開始直播還有:", value = f"<t:{self.history_song[self.position-1].start_time}:R>", inline = False)
-        else:
-            miko.add_field(name = "⌛等待直播開始:", value = f"已嘗試連接 {self.history_song[self.position-1].reconnection_times} 次", inline = False)
-        if self.history_song[self.position-1].platform == Platform.YOUTUBE:
-            miko.add_field(name = f"{Platform.YOUTUBE.value}頻道:",value = self.history_song[self.position-1].channel_title)
-        elif self.history_song[self.position-1].platform == Platform.TWITCH:
-            miko.add_field(name = f"{Platform.TWITCH.value}頻道:",value = self.history_song[self.position-1].channel_title)
-        miko.add_field(name = "🔊音量:", value = f"{self.get_volume()}%", inline = False)
-        miko.add_field(name = "🚩目前序位:", value = self.get_current_queue())
-        self.ui_control()
-        self.temp_embed = miko
-        return miko
-
     def create_embed(self) -> Embed:
-        # 只要是LIVE都建立新的
-        if "reconnection_times" in self.current_song.extras.__dict__:
-            if  self.current_song.extras.reconnection_times >= 0:
-                self.play_type = self.PlayType.LIVEWAITING
-            else:
-                self.play_type = self.PlayType.LIVE
-            return self.create_current_live_waiting_embed()
+        if self.player.paused:
+            self.play_type = self.PlayType.PAUSING
         else:
-            if self.player.paused:
-                self.play_type = self.PlayType.PAUSING
-            else:
-                self.play_type = self.PlayType.PLAYING
-            if (self.player.current.length // 1000 // 3600) > 24:
-                self.play_type = self.PlayType.LIVE
+            self.play_type = self.PlayType.PLAYING
+        if (self.player.current.length // 1000 // 3600) > 24:
+            self.play_type = self.PlayType.LIVE
 
-            return self.create_current_song_embed(self.current_song)
+        return self.create_current_song_embed(self.current_song)
 
     def create_current_song_embed(self,song:wavelink.Playable) -> Embed:
         miko = Embed(colour = Colour.random())
@@ -328,10 +301,6 @@ class ControlView(CustomView):
         return f"{self.position}/{self.song_count}"
 
     def refresh_song_count(self):
-        print("queue",self.player.queue.count)
-        print("queue",self.player.queue)
-        print("history",self.player.queue.history.count)
-        print("history",self.player.queue.history)
         self.song_count = self.player.queue.count + self.player.queue.history.count + (1 if self.player.current is not None else 0)
         if(self.player.current is not None):
             try:
@@ -339,8 +308,6 @@ class ControlView(CustomView):
                 self.song_count -= 1
             except (ValueError):
                 pass
-        print("player.current",self.player.current)
-        print("count",self.song_count)
 
     async def __get_current_song_list(self, interaction: Interaction):
         await interaction.response.defer()
@@ -412,6 +379,7 @@ class ControlView(CustomView):
 
     @tasks.loop(seconds = 10)
     async def refresh_panel(self):
+        self.refresh_song_count()
         await self.message.edit(content=None, embed=self.create_embed(), view=self)
 
     @tasks.loop(seconds = 1)
@@ -617,6 +585,7 @@ class SelectPlaylistView(CustomView):
             miko.set_author(name = f"第 {self.position + 1} 個播放清單(共 {len(self.playlists)} 個):")
             miko.add_field(name = "🎯名稱:", value = title, inline = False)
             miko.add_field(name = "👑擁有者:", value = f"{item.creater.display_name}", inline = False)
+            miko.add_field(name = "🎵播放次數:", value = f"{item.play_count}次", inline = False)
             miko.add_field(name = "🎲歌曲數目:", value = f"共 {len(item.song_list)} 首", inline = False)
             if len(item.song_list) != 0:
                 songs = ""
@@ -694,13 +663,14 @@ class SelectPlaylistView(CustomView):
             self.specified = False
         else:
             song_list = self.current_playlist[1].song_list
-
+        self.current_playlist[1].play_count += 1
+        sql.update_playlist_play_count(self.current_playlist[0], self.current_playlist[1].play_count)
         if player.queue.is_empty and not player.playing:
             song_list[0].setExtras({"user": interaction.user.id})
-            await player.play(song_list[0].track)
             for item in song_list[1:len(song_list)]:
                 item.setExtras({"user": interaction.user.id})
                 await player.queue.put_wait(item.track)
+            await player.play(song_list[0].track)
             await interaction.followup.edit_message(interaction.message.id, content = f'已點播歌單 `{self.current_playlist[0]}` 現正準備播放中......')
             control_panel.message = await interaction.followup.send(content = None, embed = control_panel.create_embed(), view = control_panel, ephemeral = False)
             control_panel.message_id = control_panel.message.id
@@ -709,7 +679,7 @@ class SelectPlaylistView(CustomView):
         else:
             for item in song_list:
                 item.setExtras({"user": interaction.user.id})
-                await player.queue.put_wait(item[0].track)
+                await player.queue.put_wait(item.track)
             await interaction.followup.edit_message(interaction.message.id, content = f'已插入歌單 `{self.current_playlist[0]}` 至隊列中 共{len(song_list)}首')
             await control_panel.message.edit(content = f"<@{interaction.user.id}> 已插入歌單 `{self.current_playlist[0]}` 至隊列中  共{len(song_list)}首", embed = control_panel.create_embed(), view = control_panel)
 
@@ -780,10 +750,11 @@ class PlayerlistEditView(CustomView):
                         #     else:
                         #         await interaction.followup.edit_message(interaction.message.id, content = f"不支援歌單型式，請重新輸入", view = self.view, embed = await self.view.get_current_playlist_song_embed())
                         #         return
+                        song.setExtras({"joiner":interaction.user.id})
                         if int(self.position.value) == len(self.view.playlist) + 1:
-                            self.view.playlist.append((song, interaction.user))
+                            self.view.playlist.append(song)
                         else:
-                            self.view.playlist.insert(int(self.position.value) - 1, (song, interaction.user))
+                            self.view.playlist.insert(int(self.position.value) - 1, song)
                         sql.insert_playlist_song(self.view.title, int(self.position.value), self.query.value, interaction.user.id)
                         await interaction.followup.edit_message(interaction.message.id, content = f"插入成功，已插入位置:{self.position.value}", view = self.view, embed = await self.view.get_current_playlist_song_embed())
                     else:
@@ -962,7 +933,7 @@ class SelectSongView(CustomView):
                 self.control_panel.refresh_panel.start()
             else:
                 await self.player.queue.put_wait(song)
-                await interaction.followup.edit_message(interaction.message.id, content = f'已新增歌曲 `{song.title}` 至隊列中 序列位置為:{self.player.queue.count+1}', embed = None, view = None)
+                await interaction.followup.edit_message(interaction.message.id, content = f'已新增歌曲 `{song.title}` 至隊列中 序列位置為:{self.control_panel.song_count+1}', embed = None, view = None)
                 await self.control_panel.message.edit(content = f"<@{interaction.user.id}> 已新增歌曲 `{song.title}` 至隊列中", embed=self.control_panel.create_embed(), view = self.control_panel)
         else:
             if self.position == len(self.edit_view.playlist) + 1:
@@ -1147,102 +1118,76 @@ class Music(commands.Cog):
     @commands.Cog.listener()
     async def on_wavelink_track_end(self,payload: wavelink.TrackEndEventPayload): #當播放結束後執行
         player = payload.player
-        guild_id = list(self.players.keys())[list(self.players.values()).index(player)]
-        control_panel: ControlView = self.control_panels[guild_id]
-        control_panel.previous_song = payload.track
-        print("----------on_wavelink_track_end----------")
-        control_panel.refresh_song_count()
-        song_length = control_panel.song_count
+        if player is not None:
+            guild_id = list(self.players.keys())[list(self.players.values()).index(player)]
+            control_panel: ControlView = self.control_panels[guild_id]
+            control_panel.previous_song = payload.track
+            control_panel.refresh_song_count()
+            song_length = control_panel.song_count
 
-        if control_panel.delete & (song_length != 0): #刪除模式且不只一首歌(只有一首歌時刪除會報錯)
-            print("A")
-            player.queue.history.remove(payload.track) #刪除當前歌曲
-            song_length -= 1
-            if not control_panel.karaoke:
-                control_panel.delete = False
+            if control_panel.delete & (song_length != 0): #刪除模式且不只一首歌(只有一首歌時刪除會報錯)
+                player.queue.history.remove(payload.track) #刪除當前歌曲
+                song_length -= 1
+                if not control_panel.karaoke:
+                    control_panel.delete = False
 
-        #(未開循環且播到最後一首)或(只有一首歌)或(停止播放)
-        if ((not control_panel.cycle) & (control_panel.position == song_length)) | ((control_panel.position == 0) & (song_length == 0) | control_panel.stop):
-            print("B")
-            await player.disconnect()
-            self.players.pop(guild_id)
-            if control_panel.refresh_panel.is_running():
-                control_panel.refresh_panel.cancel()
-            await control_panel.message.delete()
-            if control_panel.refresh_webhook.is_running():
-                control_panel.refresh_webhook.cancel()
-            if control_panel.karaoke:
-                await control_panel.karaoke_message.delete()
-            self.control_panels.pop(guild_id)
-            return
-        
-        #(開啟循環全部)且(開啟循環)且(播到最後一首)
-        if (control_panel.cycle_type == control_panel.CycleType.ALL) & (control_panel.cycle) & (control_panel.position == song_length):  
-            print("C")
-            control_panel.position = 1
-            return
-        
-        #(開啟循環單曲)且(開啟循環)
-        if (control_panel.cycle_type == control_panel.CycleType.SINGLE) & (control_panel.cycle) & (not control_panel.skip) & (not control_panel.delete):
-            print("D")
-            return
-        
-        #判斷下一首是不是直播 如果是須把autoplay關掉 才不會播放音樂
-        try:
-            next_song = player.queue.peek(control_panel.position)
-        except (wavelink.QueueEmpty, IndexError):
-            next_song = None
-        if next_song is not None:
-            print("E")
-            if next_song.is_stream:
-                player.autoplay = wavelink.AutoPlayMode.disabled
+            #(未開循環且播到最後一首)或(只有一首歌)或(停止播放)
+            if ((not control_panel.cycle) & (control_panel.position == song_length)) | ((control_panel.position == 0) & (song_length == 0) | control_panel.stop):
+                await player.disconnect()
+                self.players.pop(guild_id)
                 if control_panel.refresh_panel.is_running():
                     control_panel.refresh_panel.cancel()
-            else:
-                player.autoplay = wavelink.AutoPlayMode.partial
-                if not control_panel.refresh_panel.is_running():
-                    control_panel.refresh_panel.start()
-        
-        #未開循環且(開循環且(開啟循環全部))且不只一首
-        control_panel.position += 1
+                await control_panel.message.delete()
+                if control_panel.refresh_webhook.is_running():
+                    control_panel.refresh_webhook.cancel()
+                if control_panel.karaoke:
+                    await control_panel.karaoke_message.delete()
+                self.control_panels.pop(guild_id)
+                return
+            
+            #(開啟循環全部)且(開啟循環)且(播到最後一首)
+            if (control_panel.cycle_type == control_panel.CycleType.ALL) & (control_panel.cycle) & (control_panel.position == song_length):  
+                control_panel.position = 1
+                return
+            
+            #(開啟循環單曲)且(開啟循環)
+            if (control_panel.cycle_type == control_panel.CycleType.SINGLE) & (control_panel.cycle) & (not control_panel.skip) & (not control_panel.delete):
+                return
+            
+            #判斷下一首是不是直播 如果是須把autoplay關掉 才不會播放音樂
+            try:
+                next_song = player.queue.peek(control_panel.position)
+            except (wavelink.QueueEmpty, IndexError):
+                next_song = None
+            if next_song is not None:
+                if next_song.is_stream:
+                    player.autoplay = wavelink.AutoPlayMode.disabled
+                    if control_panel.refresh_panel.is_running():
+                        control_panel.refresh_panel.cancel()
+                else:
+                    player.autoplay = wavelink.AutoPlayMode.partial
+                    if not control_panel.refresh_panel.is_running():
+                        control_panel.refresh_panel.start()
+            
+            #未開循環且(開循環且(開啟循環全部))且不只一首
+            control_panel.position += 1
 
     @commands.Cog.listener()
     async def on_wavelink_track_start(self,payload: wavelink.TrackStartEventPayload): #當播放開始時執行
-        print("----------on_wavelink_track_start----------")
         player = payload.player
-        guild_id = list(self.players.keys())[list(self.players.values()).index(player)]
-        control_panel: ControlView = self.control_panels[guild_id]
-        control_panel.current_song = player.current
-        control_panel.refresh_song_count()
-
-        control_panel.skip = False #暫時
-        try:
-            next_song = player.queue.peek(control_panel.position)
-        except (wavelink.QueueEmpty,IndexError):
-            next_song = None
-        if control_panel.message is not None:
-            await control_panel.message.edit(embed = control_panel.create_embed(), view = control_panel)
-        
-        # if next_song is not None:
-        #     if (control_panel.skip or control_panel.delete) and control_panel.karaoke:
-        #         if control_panel.lyric_control.is_running():
-        #             control_panel.lyric_control.cancel()
-        #         if control_panel.skip:
-        #             await control_panel.karaoke_message.edit(content = f"已跳過`{control_panel.previous_song_title}`，下一首歌是:`{next_song.title}`")
-        #         elif control_panel.delete:
-        #             await control_panel.karaoke_message.edit(content = f"已刪除`{control_panel.previous_song_title}`，下一首歌是:`{next_song.title}`")
-        #         control_panel.skip = False
-        #         control_panel.delete = False
-
-
-            # if control_panel.karaoke and next_song.source == "spotify": #開啟卡拉OK模式且為spotify歌曲
-            #     if next_song.karaoke: #且下一首歌支援卡拉OK
-            #         await asyncio.sleep(3)
-            #         await control_panel.seek_lyric(3) #需與上面的sleep時間同步
-            #     else:
-            #         await control_panel.karaoke_message.edit(content = "此首歌不支援卡拉OK模式，請等待下一首歌")
-            # elif control_panel.karaoke: #開啟卡拉OK模式(下一首歌不支援卡拉OK)
-            #     await control_panel.karaoke_message.edit(content = "此首歌不支援卡拉OK模式，請等待下一首歌")
+        if player is not None:
+            guild_id = list(self.players.keys())[list(self.players.values()).index(player)]
+            control_panel: ControlView = self.control_panels[guild_id]
+            control_panel.current_song = player.current
+            control_panel.refresh_song_count()
+            await control_panel.set_volume(DEFAULT_VOLUME) #還原成初始音量
+            control_panel.skip = False #暫時
+            try:
+                next_song = player.queue.peek(control_panel.position)
+            except (wavelink.QueueEmpty,IndexError):
+                next_song = None
+            if control_panel.message is not None:
+                await control_panel.message.edit(embed = control_panel.create_embed(), view = control_panel)
 
     @app_commands.guild_only()
     @app_commands.command(name="play", description="播放音樂")
@@ -1275,12 +1220,13 @@ class Music(commands.Cog):
                 control_panel.refresh_panel.start()
             else:
                 await player.queue.put_wait(song)
-                await interaction.followup.edit_message(message.id, content=f'已新增歌曲 `{song.title}` 至隊列中 序列位置為:{player.queue.count+1}')
+                await interaction.followup.edit_message(message.id, content=f'已新增歌曲 `{song.title}` 至隊列中 序列位置為:{control_panel.song_count+1}')
                 control_panel.refresh_song_count()
                 await control_panel.message.edit(content = f"<@{interaction.user.id}> 已新增歌曲 `{song.title}` 至隊列中", embed = control_panel.create_embed(), view = control_panel)
         
         async def play_multiply_song(song_list:List[wavelink.Playable]):
             # 添加是誰播放的
+            control_panel.song_count += len(song_list)
             for song in song_list:
                 song.extras = {"user": interaction.user.id}
 
@@ -1296,36 +1242,6 @@ class Music(commands.Cog):
                 await player.queue.put_wait(song_list)
                 await interaction.followup.edit_message(message.id, content = f'已新增歌單/專輯 至隊列中 共{len(song_list)}首')
                 await control_panel.message.edit(content = f"<@{interaction.user.id}> 已新增歌單/專輯 至隊列中  共{len(song_list)}首", embed = control_panel.create_embed(), view = control_panel)
-
-        # async def check_play(song_list:List[wavelink.Playable]):
-        #     global position 
-        #     position = 0
-        #     async def check():
-        #         global position
-        #         try:
-        #             await player.play(song_list[position])
-        #         except:
-        #             position += 1
-        #             await check()
-        #     await check()
-        #     del control_panel.history_thumbnails[:position]
-        #     del control_panel.history_song[:position]
-        #     for song in song_list[position+1:len(song_list)]:
-        #         await player.queue.put_wait(song)
-
-        
-        # async def play_from_spotify():
-        #     type = spotify.decode_url(query)['type']
-        #     if (type == spotify.SpotifySearchType.track):
-        #         await play_single_song(STSong(query))
-        #     elif (type == spotify.SpotifySearchType.playlist or spotify.SpotifySearchType.album):
-        #         tracks: list[spotify.SpotifyTrack] = await spotify.SpotifyTrack.search(query=query)
-        #         await play_multiply_song(tracks)
-        #     else:
-        #         await interaction.followup.edit_message(message.id, content=f"無法辨識的網址，請重新輸入")
-        #         await asyncio.sleep(3)
-        #         deleted = self.players.pop(interaction.guild_id)
-        #         await deleted.disconnect()
 
         if interaction.user.voice is None:
             await interaction.response.send_message("請先加入語音頻道，再輸入指令", ephemeral = True)
