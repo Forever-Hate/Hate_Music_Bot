@@ -70,21 +70,3 @@ class client(commands.Bot):
 if __name__ == "__main__":
    bot = client()
    bot.run(TOKEN)
-
-
-
-
-
-#@bot.command() #指令修飾詞
-#async def play(ctx): #方法名稱即為指令 輸入指令後傳入discord.ext.commands.context.Context 物件
-    #print(ctx)
-    #await ctx.send("play")
-
-#@bot.command() 
-#async def ping(ctx): 
-    #await ctx.send(f'延遲:{round(bot.latency*1000)}(ms)')
-
-#@bot.command()
-#async def 貓咪(ctx):
-    #pic = discord.File('C:/Users/minec/Desktop/Music_bot/photo/cat.jpg') #透過discord.File()讀取檔案，讓send()傳送
-    #await ctx.send(file = pic)
