@@ -14,7 +14,6 @@ from typing import Dict, List, Tuple, Union
 from discord.ui import Button
 from lib.common import Channel, CustomView, Guild, Playlist, Song , Platform
 
-NOTIFICATION_REFRESH_LIVE_INTERVAL = int(os.getenv('NOTIFICATION_REFRESH_LIVE_INTERVAL'))
 NOTIFICATION_INTERVAL = int(os.getenv('NOTIFICATION_INTERVAL'))
 MANAGE_CHANNEL_ID = int(os.getenv('MANAGE_CHANNEL_ID'))
 
