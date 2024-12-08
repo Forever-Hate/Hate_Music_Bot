@@ -476,7 +476,7 @@ class SelectPlaylistView(CustomView):
                 current = not self.playlists.__contains__(self.name.value)
                 if current:
                     sql.create_new_playlist(self.name.value, interaction.user.id)
-                    self.playlists[self.name.value] = Playlist([], interaction.user)
+                    self.playlists[self.name.value] = Playlist([], interaction.user,0)
                 await interaction.followup.edit_message(message_id = interaction.message.id, content = "建立成功" if current else f"建立失敗，{self.name.value} 已存在",
                                                         view = self.view, embed = await self.view.get_current_playlist_embed())
             else:
